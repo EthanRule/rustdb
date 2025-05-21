@@ -1,11 +1,11 @@
 use serde_json::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
 #[derive(Debug)]
 struct Database {
     name: String,
-    collections: Vec<Collection>,
+    collections: HashMap<String, Collection>,
 }
 
 impl Database {
@@ -17,7 +17,7 @@ impl Database {
 #[derive(Debug)]
 struct Collection {
     name: String,
-    documents: HashMap<i64, Document>,
+    documents: Vec<Document>,
 }
 
 #[derive(Debug)]
@@ -37,17 +37,41 @@ fn is_valid_json(json_str: &str) -> String {
 // Database engine that holds a vector of databases and performs
 // high level operations like creating, viewing, and deleting databases.
 struct DatabaseEngine {
-    databases: Vec<Database>, //TODO: Create a file directory structure to database engine for nav.
+    databases: HashMap<String, Database>,
     database_path: String,
 }
 
 impl DatabaseEngine {
-    fn create_database(&mut self) {
-        // Ensure new db names have no spaces.
-        self.databases.push(Database { name: String::from("name"), collections: Vec::<Collection>::new() });
+    fn create_database(&mut self, input: &str) {
+
+        let name = &input.to_string()[4..input.len()].trim().to_string();
+
+        if name.contains(' ') {
+            println!("Error: database name contains spaces");
+            return;
+        }
+
+        let new_db = Database {
+            name: name.to_string(),
+            collections: HashMap::<String, Collection>::new()
+        };
+        
+        if self.databases.contains_key(&name.to_string()) {
+            println!("Error: database with name {} already exists", &new_db.name);
+            return;
+        } else {
+            self.databases.insert(name.to_string(), new_db);
+        }
+    }
+
+    fn create_collection(&self) {
+        
     }
 
     fn list_databases(&self) {
+        // TODO: be aware of if we are at root or if we are inside a database on what to display
+        // with ls
+
         let mut count = 0;
         for database in &self.databases {
             println!("{} {:?}", count, database); 
@@ -56,8 +80,30 @@ impl DatabaseEngine {
         }
     }
 
-    fn change_directory(&self, input: &str) {
-        
+    fn change_directory(&mut self, input: &str) {
+        let path = &input.to_string()[3..input.len()].trim().to_string();
+        // check if we are at root => enter a database
+        // check if we are at database => enter collection
+
+        if self.database_path == "/" {
+            // check if the database exists, if so update path, if not print non existant msg
+            if self.databases.contains_key(path) {
+                self.database_path = self.database_path.to_owned() + &path + "/";
+            } else {
+                println!("Error: database {} does not exist.", path);
+            }
+        }
+        else { // are already inside a database
+            let current_db = &self.database_path[2..self.database_path.len()];
+
+            // check if the collection exists, if so change the path to it.
+            if self.databases[current_db].collections.contains_key(path) {
+                self.database_path = self.database_path.to_owned() + &path + "/"
+            } else {
+                println!("Error: collection {} does not exist.", path);
+            }
+        }
+
     }
 }
 
@@ -73,18 +119,16 @@ fn man_page() {
 }
 
 fn run() {
-    let mut database_engine = DatabaseEngine { databases: Vec::<Database>::new(), database_path: String::from("/") };
+    let mut database_engine = DatabaseEngine { databases: HashMap::<String, Database>::new(), database_path: String::from("/") };
     loop {
         print!("{}>", database_engine.database_path);
         io::stdout().flush().expect("failed to flush output");
-
-        // Process user input and forward input to it's corrolated function.
         let mut input = String::new();
         io::stdin().read_line(&mut input).expect("Failed to read into input buffer.");
         let input = input.trim();
 
         match input {
-            "mkdb" => database_engine.create_database(), //TODO: add additional argument for
+            x if x.starts_with("mkdb") => database_engine.create_database(x),
             "ls" => database_engine.list_databases(),
             x if x.starts_with("cd") => database_engine.change_directory(x),
             "man" => man_page(),
