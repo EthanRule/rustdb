@@ -1,10 +1,17 @@
 use serde_json::Result;
 use std::collections::HashMap;
+use std::io::{self, Write};
 
 #[derive(Debug)]
 struct Database {
     name: String,
     collections: Vec<Collection>,
+}
+
+impl Database {
+    fn list_collections(&self) {
+        println!("{:?}", self.collections);
+    }
 }
 
 #[derive(Debug)]
@@ -31,12 +38,13 @@ fn is_valid_json(json_str: &str) -> String {
 // high level operations like creating, viewing, and deleting databases.
 struct DatabaseEngine {
     databases: Vec<Database>, //TODO: Create a file directory structure to database engine for nav.
-    user_dir: String,
+    database_path: String,
 }
 
 impl DatabaseEngine {
     fn create_database(&mut self) {
-        self.databases.push(Database { name: String::from("new database name"), collections: Vec::<Collection>::new() });
+        // Ensure new db names have no spaces.
+        self.databases.push(Database { name: String::from("name"), collections: Vec::<Collection>::new() });
     }
 
     fn list_databases(&self) {
@@ -47,6 +55,10 @@ impl DatabaseEngine {
             count += 1;
         }
     }
+
+    fn change_directory(&self, input: &str) {
+        
+    }
 }
 
 fn man_page() {
@@ -54,21 +66,27 @@ fn man_page() {
         "User Commands\n
         mkdb - create database\n
         ls - list databases\n
+        cd - change directory\n
         man - open manual\n
         exit - exit database engine\n
         ");
 }
 
 fn run() {
-    use text_io::read;
-    let mut database_engine = DatabaseEngine { databases: Vec::<Database>::new(), user_dir: String::from("/") };
+    let mut database_engine = DatabaseEngine { databases: Vec::<Database>::new(), database_path: String::from("/") };
     loop {
-        // Process user input and forward input to it's corrolated function.
-        let input: String = read!();
+        print!("{}>", database_engine.database_path);
+        io::stdout().flush().expect("failed to flush output");
 
-        match input.as_str() {
-            "mkdb" => database_engine.create_database(), //TODO: add additional argument for name.
+        // Process user input and forward input to it's corrolated function.
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).expect("Failed to read into input buffer.");
+        let input = input.trim();
+
+        match input {
+            "mkdb" => database_engine.create_database(), //TODO: add additional argument for
             "ls" => database_engine.list_databases(),
+            x if x.starts_with("cd") => database_engine.change_directory(x),
             "man" => man_page(),
             "exit" => return,
             _ => println!("unknown command. Try man, to view the list of possible commands."),
