@@ -3,15 +3,15 @@ name = "database"
 version = "0.1.0"
 edition = "2024"
 
-[workspace]
-members = ["storage", "document", "collection", "index", "query", "server"]
+# [workspace]
+# members = ["storage", "document", "collection", "index", "query", "server"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }

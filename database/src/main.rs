@@ -2,6 +2,9 @@ use serde_json::Result;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
+use tracing::{info, error};
+use database::init_tracing;
+
 #[derive(Debug)]
 struct Database {
     name: String,
@@ -118,7 +121,7 @@ fn man_page() {
         ");
 }
 
-fn run() {
+fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     let mut database_engine = DatabaseEngine { databases: HashMap::<String, Database>::new(), database_path: String::from("/") };
     loop {
         print!("{}>", database_engine.database_path);
@@ -132,12 +135,27 @@ fn run() {
             "ls" => database_engine.list_databases(),
             x if x.starts_with("cd") => database_engine.change_directory(x),
             "man" => man_page(),
-            "exit" => return,
+            "exit" => break,
             _ => println!("unknown command. Try man, to view the list of possible commands."),
         }
     }
+
+    Ok(())
 }
 
 fn main() { // TODO: Consider adding return type to main fn and error handling.
-    run();
+    init_tracing();
+
+    info!("Application starting up!");
+
+    match run_app() {
+        Ok(_) => {
+            info!("Application finished successfully.");
+            std::process::exit(0);
+        }
+        Err(e) => { 
+            error!("Application finished with error: {}", e);
+            std::process::exit(1);
+        }
+    }
 }

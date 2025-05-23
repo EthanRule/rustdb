@@ -44,9 +44,3 @@ impl From<io::Error> for DatabaseError {
         DatabaseError::Io(err)
     }
 }
-
-impl From<serde_json::Error> for DatabaseError {
-    fn from(err: serde_json::Error) -> DatabaseError {
-        DatabaseError::Json(err)
-    }
-}
