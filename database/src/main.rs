@@ -1,4 +1,4 @@
-use serde_json::Result;
+use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
@@ -121,7 +121,7 @@ fn man_page() {
         ");
 }
 
-fn run_app() -> Result<(), Box<dyn std::error::Error>> {
+fn run_app() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut database_engine = DatabaseEngine { databases: HashMap::<String, Database>::new(), database_path: String::from("/") };
     loop {
         print!("{}>", database_engine.database_path);
@@ -139,11 +139,10 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
             _ => println!("unknown command. Try man, to view the list of possible commands."),
         }
     }
-
     Ok(())
 }
 
-fn main() { // TODO: Consider adding return type to main fn and error handling.
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> { // TODO: Consider adding return type to main fn and error handling.
     init_tracing();
 
     info!("Application starting up!");

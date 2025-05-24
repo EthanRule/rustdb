@@ -44,3 +44,8 @@ impl From<io::Error> for DatabaseError {
         DatabaseError::Io(err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    
+}
