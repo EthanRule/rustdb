@@ -6,27 +6,27 @@ CRUD operations, indexing, querying, and transactions. It is built to resemeble 
 and documents, but is not a full implementation of MongoDB. This engine is primarily built for educational purposes.
 
 ## Features
-- [x] Support for documents (JSON-like objects)
-- [x] Page based storage system
-- [x] Collection metadata storage
-- [x] Colleciton statistics tracking
-- [x] Database level authentication
-- [x] Isolation between databases
-- [x] Support for storage space reclamation and file growth management
-- [x] Query language parsing and execution
-- [x] Quere execution engine
-- [x] Advanced regex querying
-- [x] B-tree indexing
-- [x] Index intersection optimization
-- [x] Aggregation framework
-- [x] Locking and concurrency control
-- [x] Multi-document transactions
-- [x] Network protocol and API
-- [x] Client API & Commands
-- [x] Tauri Frontend application
-- [x] Document management interface
-- [x] Advanced admin features
-- [x] Performance benchmarking & monitoring
+- [ ] Support for documents (JSON-like objects)
+- [ ] Page based storage system
+- [ ] Collection metadata storage
+- [ ] Colleciton statistics tracking
+- [ ] Database level authentication
+- [ ] Isolation between databases
+- [ ] Support for storage space reclamation and file growth management
+- [ ] Query language parsing and execution
+- [ ] Quere execution engine
+- [ ] Advanced regex querying
+- [ ] B-tree indexing
+- [ ] Index intersection optimization
+- [ ] Aggregation framework
+- [ ] Locking and concurrency control
+- [ ] Multi-document transactions
+- [ ] Network protocol and API
+- [ ] Client API & Commands
+- [ ] Tauri Frontend application
+- [ ] Document management interface
+- [ ] Advanced admin features
+- [ ] Performance benchmarking & monitoring
 
 ## Inspirations
 - MongoDB
