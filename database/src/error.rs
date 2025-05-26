@@ -47,5 +47,28 @@ impl From<io::Error> for DatabaseError {
 
 #[cfg(test)]
 mod tests {
-    
+    use super::*;
+
+    #[test]
+    fn test_error_conversion_and_display() {
+        let io_error = io::Error::new(io::ErrorKind::Other, "disk full");
+        let db_error: DatabaseError = io_error.into()
+
+        match db_error {
+            DatabaseError::Io(ref err) => assert_eq!(err.to_string(), "disk full"),
+            _ => panic!("Expected DatabaseError::Io variant"),
+        }
+
+        assert_eq!(format!("{}", db_error), "IO error: disk full");
+    }
+
+    #[test]
+    fn test_json_error_conversion_and_display() {
+        let json_error = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let db_error = DatabaseError::Json(json_error);
+
+        assert!(format!("{}, db_error).starts_with("JSON error:"));
+    }
+
+
 }
