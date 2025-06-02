@@ -1,6 +1,6 @@
+use serde_json;
 use std::fmt;
 use std::io;
-use serde_json;
 
 #[derive(Debug)]
 pub enum DatabaseError {
@@ -73,36 +73,54 @@ mod tests {
     #[test]
     fn test_storage_error_display() {
         let storage_error = DatabaseError::Storage("Failed to connect to storage".to_string());
-        assert_eq!(format!("{}", storage_error), "Storage error: Failed to connect to storage");
+        assert_eq!(
+            format!("{}", storage_error),
+            "Storage error: Failed to connect to storage"
+        );
     }
 
     #[test]
     fn test_document_error_display() {
         let document_error = DatabaseError::Document("Document not found".to_string());
-        assert_eq!(format!("{}", document_error), "Document error: Document not found");
+        assert_eq!(
+            format!("{}", document_error),
+            "Document error: Document not found"
+        );
     }
 
     #[test]
     fn test_query_error_display() {
         let query_error = DatabaseError::Query("Invalid query syntax".to_string());
-        assert_eq!(format!("{}", query_error), "Query error: Invalid query syntax");
+        assert_eq!(
+            format!("{}", query_error),
+            "Query error: Invalid query syntax"
+        );
     }
 
     #[test]
     fn test_index_error_display() {
         let index_error = DatabaseError::Index("Index creation failed".to_string());
-        assert_eq!(format!("{}", index_error), "Index error: Index creation failed");
+        assert_eq!(
+            format!("{}", index_error),
+            "Index error: Index creation failed"
+        );
     }
 
     #[test]
     fn test_network_error_display() {
         let network_error = DatabaseError::Network("Network timeout".to_string());
-        assert_eq!(format!("{}", network_error), "Network error: Network timeout");
+        assert_eq!(
+            format!("{}", network_error),
+            "Network error: Network timeout"
+        );
     }
 
     #[test]
     fn test_validation_error_display() {
         let validation_error = DatabaseError::Validation("Invalid data format".to_string());
-        assert_eq!(format!("{}", validation_error), "Validation error: Invalid data format");
+        assert_eq!(
+            format!("{}", validation_error),
+            "Validation error: Invalid data format"
+        );
     }
 }

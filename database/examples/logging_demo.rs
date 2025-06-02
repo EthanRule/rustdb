@@ -1,5 +1,5 @@
-use log;
 use env_logger;
+use log;
 
 // Run this example with the following command to see the logging output:
 // On Unix-like systems: RUST_LOG=trace; cargo run --example logging_demo

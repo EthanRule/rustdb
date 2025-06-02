@@ -2,8 +2,8 @@ use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
-use tracing::{info, error};
 use database::init_tracing;
+use tracing::{error, info};
 
 #[derive(Debug)]
 struct Database {
@@ -46,7 +46,6 @@ struct DatabaseEngine {
 
 impl DatabaseEngine {
     fn create_database(&mut self, input: &str) {
-
         let name = &input.to_string()[4..input.len()].trim().to_string();
 
         if name.contains(' ') {
@@ -56,9 +55,9 @@ impl DatabaseEngine {
 
         let new_db = Database {
             name: name.to_string(),
-            collections: HashMap::<String, Collection>::new()
+            collections: HashMap::<String, Collection>::new(),
         };
-        
+
         if self.databases.contains_key(&name.to_string()) {
             println!("Error: database with name {} already exists", &new_db.name);
             return;
@@ -67,9 +66,7 @@ impl DatabaseEngine {
         }
     }
 
-    fn create_collection(&self) {
-        
-    }
+    fn create_collection(&self) {}
 
     fn list_databases(&self) {
         // TODO: be aware of if we are at root or if we are inside a database on what to display
@@ -77,8 +74,8 @@ impl DatabaseEngine {
 
         let mut count = 0;
         for database in &self.databases {
-            println!("{} {:?}", count, database); 
-            
+            println!("{} {:?}", count, database);
+
             count += 1;
         }
     }
@@ -95,8 +92,8 @@ impl DatabaseEngine {
             } else {
                 println!("Error: database {} does not exist.", path);
             }
-        }
-        else { // are already inside a database
+        } else {
+            // are already inside a database
             let current_db = &self.database_path[2..self.database_path.len()];
 
             // check if the collection exists, if so change the path to it.
@@ -106,7 +103,6 @@ impl DatabaseEngine {
                 println!("Error: collection {} does not exist.", path);
             }
         }
-
     }
 }
 
@@ -118,16 +114,22 @@ fn man_page() {
         cd - change directory\n
         man - open manual\n
         exit - exit database engine\n
-        ");
+        "
+    );
 }
 
 fn run_app() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let mut database_engine = DatabaseEngine { databases: HashMap::<String, Database>::new(), database_path: String::from("/") };
+    let mut database_engine = DatabaseEngine {
+        databases: HashMap::<String, Database>::new(),
+        database_path: String::from("/"),
+    };
     loop {
         print!("{}>", database_engine.database_path);
         io::stdout().flush().expect("failed to flush output");
         let mut input = String::new();
-        io::stdin().read_line(&mut input).expect("Failed to read into input buffer.");
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read into input buffer.");
         let input = input.trim();
 
         match input {
@@ -142,7 +144,8 @@ fn run_app() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> { // TODO: Consider adding return type to main fn and error handling.
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // TODO: Consider adding return type to main fn and error handling.
     init_tracing();
 
     info!("Application starting up!");
@@ -152,7 +155,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> { // TODO: Cons
             info!("Application finished successfully.");
             std::process::exit(0);
         }
-        Err(e) => { 
+        Err(e) => {
             error!("Application finished with error: {}", e);
             std::process::exit(1);
         }
