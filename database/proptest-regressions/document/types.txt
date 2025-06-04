@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 013e8a40b86a0c75d811d592751d741f9e6e70e527027e9b9cf08c27c85e27c9 # shrinks to value = I32(-1)
 cc 9321cee062dfe9ba89fd795c4ec181d4b05a5b9b82578952b25fe31da8fc92cd # shrinks to value = F64(2.5110376083113515e253)
+cc a749282eaad6a967ca147e649a6c0d2d981a82ec40cf9112d10e044de5cb68ad # shrinks to value = ObjectId(ObjectId { bytes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] })

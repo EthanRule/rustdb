@@ -40,6 +40,7 @@
 // These choices make all value conversions safe, predictable, and easy to reason about, which is essential in a database
 // context where correctness is critical.
 
+use crate::document::object_id::ObjectId;
 use proptest::arbitrary::Arbitrary;
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
@@ -54,6 +55,7 @@ pub enum Value {
     I64(i64),
     F64(f64),
     String(String),
+    ObjectId(ObjectId),
 }
 
 impl fmt::Display for Value {
@@ -65,6 +67,7 @@ impl fmt::Display for Value {
             Value::I64(i) => write!(f, "{}", i),
             Value::F64(fl) => write!(f, "{}", fl),
             Value::String(s) => write!(f, "{}", s),
+            Value::ObjectId(oid) => write!(f, "{}", oid),
         }
     }
 }
@@ -82,6 +85,7 @@ impl Arbitrary for Value {
             any::<i64>().prop_map(I64),
             any::<f64>().prop_map(F64),
             ".*".prop_map(String),
+            any::<crate::document::object_id::ObjectId>().prop_map(ObjectId),
         ]
         .boxed()
     }
@@ -102,6 +106,10 @@ impl Value {
 
     fn is_string(&self) -> bool {
         matches!(self, Value::String(_))
+    }
+
+    fn is_object_id(&self) -> bool {
+        matches!(self, Value::ObjectId(_))
     }
 
     fn as_bool(&self) -> Option<bool> {
@@ -128,6 +136,7 @@ impl Value {
                 _ => None,
             },
             Value::Bool(x) => Some(*x),
+            Value::ObjectId(_) => None, // ObjectId cannot be converted to bool
         }
     }
 
@@ -148,6 +157,7 @@ impl Value {
                 true => Some(1i32),
                 false => Some(0i32),
             },
+            Value::ObjectId(_) => None, // ObjectId cannot be converted to i32
         }
     }
 
@@ -162,6 +172,7 @@ impl Value {
                 true => Some(1i64),
                 false => Some(0i64),
             },
+            Value::ObjectId(_) => None, // ObjectId cannot be converted to i64
         }
     }
 
@@ -176,6 +187,7 @@ impl Value {
                 true => Some(1f64),
                 false => Some(0f64),
             },
+            Value::ObjectId(_) => None, // ObjectId cannot be converted to f64
         }
     }
 
@@ -190,6 +202,14 @@ impl Value {
                 true => Some(String::from("true")),
                 false => Some(String::from("false")),
             },
+            Value::ObjectId(oid) => None, // ObjectId cannot be converted to String
+        }
+    }
+
+    fn as_object_id(&self) -> Option<ObjectId> {
+        match self {
+            Value::ObjectId(oid) => Some(oid.clone()),
+            _ => None,
         }
     }
 }
@@ -315,6 +335,32 @@ mod tests {
         assert_eq!(value.as_str(), Some("3.14".to_string()));
     }
 
+    #[test]
+    fn test_value_is_object_id() {
+        let oid = ObjectId::new();
+        let value = Value::ObjectId(oid.clone());
+        assert!(value.is_object_id());
+        assert_eq!(value.as_object_id(), Some(oid));
+    }
+
+    #[test]
+    fn test_object_id_display_and_hex() {
+        let oid = ObjectId::from_bytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        let value = Value::ObjectId(oid.clone());
+        assert_eq!(value.to_string(), oid.to_hex());
+    }
+
+    #[test]
+    fn test_object_id_no_number_conversion() {
+        let oid = ObjectId::new();
+        let value = Value::ObjectId(oid);
+        assert_eq!(value.as_bool(), None);
+        assert_eq!(value.as_i32(), None);
+        assert_eq!(value.as_i64(), None);
+        assert_eq!(value.as_f64(), None);
+        assert_eq!(value.as_str(), None);
+    }
+
     // Property-based tests for Value enum
 
     proptest! {
@@ -328,6 +374,7 @@ mod tests {
                 Value::I64(i) => assert_eq!(display, i.to_string()),
                 Value::F64(f) => assert_eq!(display, f.to_string()),
                 Value::String(s) => assert_eq!(display, s),
+                Value::ObjectId(oid) => assert_eq!(display, oid.to_hex()),
             }
         }
 
@@ -389,6 +436,8 @@ mod tests {
                         assert_eq!(result, None);
                     }
                 }
+                Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
+                // bool
             }
         }
 
@@ -420,6 +469,8 @@ mod tests {
                     }
                 },
                 Value::Bool(b) => assert_eq!(result, Some(if b { 1 } else { 0 })),
+                Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
+                // i32
             }
         }
 
@@ -439,6 +490,8 @@ mod tests {
                     }
                 }
                 Value::Bool(b) => assert_eq!(result, Some(if b { 1 } else { 0 })),
+                Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
+                // i64
             }
         }
 
@@ -458,6 +511,8 @@ mod tests {
                     }
                 }
                 Value::Bool(b) => assert_eq!(result, Some(if b { 1.0 } else { 0.0 })),
+                Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
+                // f64
             }
         }
 
@@ -471,7 +526,31 @@ mod tests {
                 Value::F64(f) => assert_eq!(result, Some(f.to_string())),
                 Value::String(s) => assert_eq!(result, Some(s)),
                 Value::Bool(b) => assert_eq!(result, Some(if b { "true".to_string() } else { "false".to_string() })),
+                Value::ObjectId(oid) => assert_eq!(result, None), // ObjectId cannot be converted
+                // to String
             }
+        }
+
+        #[test]
+        fn prop_value_object_id_roundtrip(oid in any::<ObjectId>()) {
+            let value = Value::ObjectId(oid.clone());
+            prop_assert_eq!(value.as_object_id(), Some(oid));
+        }
+
+        #[test]
+        fn prop_value_object_id_display_and_hex(oid in any::<ObjectId>()) {
+            let value = Value::ObjectId(oid.clone());
+            prop_assert_eq!(value.to_string(), oid.to_hex());
+        }
+
+        #[test]
+        fn prop_value_object_id_no_number_conversion(oid in any::<ObjectId>()) {
+            let value = Value::ObjectId(oid);
+            prop_assert!(value.as_bool().is_none());
+            prop_assert!(value.as_i32().is_none());
+            prop_assert!(value.as_i64().is_none());
+            prop_assert!(value.as_f64().is_none());
+            prop_assert!(value.as_str().is_none());
         }
     }
 }

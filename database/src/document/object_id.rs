@@ -1,11 +1,15 @@
 use chrono::{DateTime, TimeZone, Utc};
 use hex::{FromHex, ToHex};
+use proptest::arbitrary::Arbitrary;
+use proptest::prelude::*;
+use proptest::strategy::{BoxedStrategy, Strategy};
 use rand::Rng;
 use std::fmt;
+use std::time::Instant;
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ObjectId {
+pub struct ObjectId {
     bytes: [u8; 12],
 }
 
@@ -16,6 +20,16 @@ impl fmt::Display for ObjectId {
             write!(f, "{:02x}", byte)?;
         }
         Ok(())
+    }
+}
+
+impl Arbitrary for ObjectId {
+    // for property-based testing
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+        any::<[u8; 12]>().prop_map(ObjectId::from_bytes).boxed()
     }
 }
 
@@ -59,9 +73,19 @@ impl ObjectId {
 }
 
 // ObjectId Benchmark for generation speeds
-pub fn Object_Id_Benchmark {
-    let start = SystemTime::now()
-    let ObjectId = ObjectId::new()
+pub fn object_id_benchmark() {
+    let iterations = 1_000_000;
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let _object_id = ObjectId::new();
+    }
+    let duration = start.elapsed();
+    let per_op = duration.as_secs_f64() / iterations as f64 * 1_000_000.0; // microseconds
+
+    println!(
+        "Generated {} ObjectIds in {:?} ({:.3} μs/object)",
+        iterations, duration, per_op
+    );
 }
 
 #[cfg(test)]
@@ -119,6 +143,13 @@ mod tests {
         let object = ObjectId::from_bytes(bytes);
         let dt = object.timestamp();
         assert_eq!(dt, Utc.ymd(2025, 1, 1).and_hms(0, 0, 0));
+    }
+
+    // -- BENCHMARK TESTS ----
+
+    #[test]
+    fn test_object_id_benchmark() {
+        object_id_benchmark();
     }
 
     // ---- PROPERTY-BASED TESTS ----
