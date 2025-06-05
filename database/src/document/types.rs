@@ -41,9 +41,11 @@
 // context where correctness is critical.
 
 use crate::document::object_id::ObjectId;
+use chrono::{DateTime, Utc};
 use proptest::arbitrary::Arbitrary;
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
+use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fmt;
 
@@ -56,6 +58,10 @@ pub enum Value {
     F64(f64),
     String(String),
     ObjectId(ObjectId),
+    Array(Vec<Value>),
+    Object(BTreeMap<String, Value>),
+    DateTime(DateTime<Utc>),
+    Binary(Vec<u8>),
 }
 
 impl fmt::Display for Value {
