@@ -49,7 +49,7 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -74,6 +74,22 @@ impl fmt::Display for Value {
             Value::F64(fl) => write!(f, "{}", fl),
             Value::String(s) => write!(f, "{}", s),
             Value::ObjectId(oid) => write!(f, "{}", oid),
+            Value::Array(arr) => {
+                let elements: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
+                write!(f, "[{}]", elements.join(", "))
+            }
+            Value::Object(obj) => {
+                let elements: Vec<String> = obj
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v.to_string()))
+                    .collect();
+                write!(f, "{{{}}}", elements.join(", "))
+            }
+            Value::DateTime(dt) => write!(f, "{}", dt.to_rfc3339()),
+            Value::Binary(bin) => {
+                let hex: String = bin.iter().map(|b| format!("{:02x}", b)).collect();
+                write!(f, "Binary({})", hex)
+            }
         }
     }
 }
@@ -98,27 +114,43 @@ impl Arbitrary for Value {
 }
 
 impl Value {
-    fn is_null(&self) -> bool {
+    pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
 
-    fn is_bool(&self) -> bool {
+    pub fn is_bool(&self) -> bool {
         matches!(self, Value::Bool(_))
     }
 
-    fn is_number(&self) -> bool {
+    pub fn is_number(&self) -> bool {
         matches!(self, Value::I32(_) | Value::I64(_) | Value::F64(_))
     }
 
-    fn is_string(&self) -> bool {
+    pub fn is_string(&self) -> bool {
         matches!(self, Value::String(_))
     }
 
-    fn is_object_id(&self) -> bool {
+    pub fn is_object_id(&self) -> bool {
         matches!(self, Value::ObjectId(_))
     }
 
-    fn as_bool(&self) -> Option<bool> {
+    pub fn is_array(&self) -> bool {
+        matches!(self, Value::Array(_))
+    }
+
+    pub fn is_object(&self) -> bool {
+        matches!(self, Value::Object(_))
+    }
+
+    pub fn is_datetime(&self) -> bool {
+        matches!(self, Value::DateTime(_))
+    }
+
+    pub fn is_binary(&self) -> bool {
+        matches!(self, Value::Binary(_))
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Null => Some(false),
             Value::I32(x) => match x {
@@ -143,10 +175,11 @@ impl Value {
             },
             Value::Bool(x) => Some(*x),
             Value::ObjectId(_) => None, // ObjectId cannot be converted to bool
+            _ => None,                  // Other types cannot be converted to bool
         }
     }
 
-    fn as_i32(&self) -> Option<i32> {
+    pub fn as_i32(&self) -> Option<i32> {
         match self {
             Value::Null => None,
             Value::I32(x) => Some(*x),
@@ -164,29 +197,31 @@ impl Value {
                 false => Some(0i32),
             },
             Value::ObjectId(_) => None, // ObjectId cannot be converted to i32
+            _ => None,                  // Other types cannot be converted to i32
         }
     }
 
-    fn as_i64(&self) -> Option<i64> {
+    pub fn as_i64(&self) -> Option<i64> {
         match self {
             Value::Null => None,
             Value::I32(x) => Some(*x as i64),
             Value::I64(x) => Some(*x),
-            Value::F64(x) => Some(*x as i64),
+            Value::F64(x) => Some(*x as i64), // TODO: add Truncation to docs.
             Value::String(x) => x.parse::<i64>().ok(),
             Value::Bool(x) => match x {
                 true => Some(1i64),
                 false => Some(0i64),
             },
             Value::ObjectId(_) => None, // ObjectId cannot be converted to i64
+            _ => None,                  // Other types cannot be converted to i64
         }
     }
 
-    fn as_f64(&self) -> Option<f64> {
+    pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::Null => None,
             Value::I32(x) => Some(*x as f64),
-            Value::I64(x) => Some(*x as f64),
+            Value::I64(x) => Some(*x as f64), // TODO: add Truncation to docs.
             Value::F64(x) => Some(*x),
             Value::String(x) => x.parse::<f64>().ok(),
             Value::Bool(x) => match x {
@@ -194,10 +229,11 @@ impl Value {
                 false => Some(0f64),
             },
             Value::ObjectId(_) => None, // ObjectId cannot be converted to f64
+            _ => None,                  // Other types cannot be converted to f64
         }
     }
 
-    fn as_str(&self) -> Option<String> {
+    pub fn to_str(&self) -> Option<String> {
         match self {
             Value::Null => None,
             Value::I32(x) => Some(x.to_string()),
@@ -209,12 +245,55 @@ impl Value {
                 false => Some(String::from("false")),
             },
             Value::ObjectId(oid) => None, // ObjectId cannot be converted to String
+            _ => None,                    // Other types cannot be converted to String
         }
     }
 
-    fn as_object_id(&self) -> Option<ObjectId> {
+    pub fn as_object_id(&self) -> Option<ObjectId> {
         match self {
             Value::ObjectId(oid) => Some(oid.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&Vec<Value>> {
+        match self {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
+        match self {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn as_object(&self) -> Option<&BTreeMap<String, Value>> {
+        match self {
+            Value::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn as_object_mut(&mut self) -> Option<&mut BTreeMap<String, Value>> {
+        match self {
+            Value::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn as_datetime(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Value::DateTime(dt) => Some(*dt),
+            _ => None,
+        }
+    }
+
+    pub fn as_binary(&self) -> Option<&Vec<u8>> {
+        match self {
+            Value::Binary(bin) => Some(bin),
             _ => None,
         }
     }
@@ -324,21 +403,21 @@ mod tests {
     }
 
     #[test]
-    fn test_value_as_str() {
+    fn test_value_to_str() {
         let value = Value::String("Hello".to_string());
-        assert_eq!(value.as_str(), Some("Hello".to_string()));
+        assert_eq!(value.to_str(), Some("Hello".to_string()));
 
         let value = Value::I32(42);
-        assert_eq!(value.as_str(), Some("42".to_string()));
+        assert_eq!(value.to_str(), Some("42".to_string()));
 
         let value = Value::Null;
-        assert_eq!(value.as_str(), None);
+        assert_eq!(value.to_str(), None);
 
         let value = Value::Bool(true);
-        assert_eq!(value.as_str(), Some("true".to_string()));
+        assert_eq!(value.to_str(), Some("true".to_string()));
 
         let value = Value::F64(3.14);
-        assert_eq!(value.as_str(), Some("3.14".to_string()));
+        assert_eq!(value.to_str(), Some("3.14".to_string()));
     }
 
     #[test]
@@ -364,7 +443,55 @@ mod tests {
         assert_eq!(value.as_i32(), None);
         assert_eq!(value.as_i64(), None);
         assert_eq!(value.as_f64(), None);
-        assert_eq!(value.as_str(), None);
+        assert_eq!(value.to_str(), None);
+    }
+
+    #[test]
+    fn test_as_array_and_mut() {
+        let mut v = Value::Array(vec![Value::I32(1)]);
+        // as_array returns Some
+        assert!(v.as_array().is_some());
+        // push with as_array_mut
+        v.as_array_mut().unwrap().push(Value::I32(2));
+        assert_eq!(v.as_array().unwrap().len(), 2);
+
+        // as_array returns None for non-array
+        let v2 = Value::I32(1);
+        assert!(v2.as_array().is_none());
+    }
+
+    #[test]
+    fn test_as_object_and_mut() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("a".to_string(), Value::I32(1));
+        let mut v = Value::Object(map);
+        // as_object returns Some
+        assert!(v.as_object().is_some());
+        // insert using as_object_mut
+        v.as_object_mut()
+            .unwrap()
+            .insert("b".to_string(), Value::I32(2));
+        assert_eq!(v.as_object().unwrap().len(), 2);
+
+        // as_object returns None for non-object
+        let v2 = Value::I32(1);
+        assert!(v2.as_object().is_none());
+    }
+
+    #[test]
+    fn test_nested_structures() {
+        let mut v = Value::Array(vec![Value::Object({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("x".into(), Value::I32(42));
+            m
+        })]);
+        // Navigate and mutate deeply
+        if let Some(obj) = v.as_array_mut().unwrap()[0].as_object_mut() {
+            obj.insert("y".to_string(), Value::I32(99));
+        }
+        if let Some(obj) = v.as_array().unwrap()[0].as_object() {
+            assert_eq!(obj.get("y").unwrap(), &Value::I32(99));
+        }
     }
 
     // Property-based tests for Value enum
@@ -381,6 +508,22 @@ mod tests {
                 Value::F64(f) => assert_eq!(display, f.to_string()),
                 Value::String(s) => assert_eq!(display, s),
                 Value::ObjectId(oid) => assert_eq!(display, oid.to_hex()),
+                Value::Array(arr) => {
+                    let elements: Vec<String> = arr.iter().map(|v| v.to_string()).collect();
+                    assert_eq!(display, format!("[{}]", elements.join(", ")));
+                }
+                Value::Object(obj) => {
+                    let elements: Vec<String> = obj
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, v.to_string()))
+                        .collect();
+                    assert_eq!(display, format!("{{{}}}", elements.join(", ")));
+                }
+                Value::DateTime(dt) => assert_eq!(display, dt.to_rfc3339()),
+                Value::Binary(bin) => {
+                    let hex: String = bin.iter().map(|b| format!("{:02x}", b)).collect();
+                    assert_eq!(display, format!("Binary({})", hex));
+                }
             }
         }
 
@@ -443,7 +586,7 @@ mod tests {
                     }
                 }
                 Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
-                // bool
+                _ => assert_eq!(result, None), // Other types cannot be converted to bool
             }
         }
 
@@ -476,7 +619,7 @@ mod tests {
                 },
                 Value::Bool(b) => assert_eq!(result, Some(if b { 1 } else { 0 })),
                 Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
-                // i32
+                _ => assert_eq!(result, None), // Other types cannot be converted to i32
             }
         }
 
@@ -497,7 +640,7 @@ mod tests {
                 }
                 Value::Bool(b) => assert_eq!(result, Some(if b { 1 } else { 0 })),
                 Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
-                // i64
+                _ => assert_eq!(result, None), // Other types cannot be converted to i64
             }
         }
 
@@ -518,13 +661,13 @@ mod tests {
                 }
                 Value::Bool(b) => assert_eq!(result, Some(if b { 1.0 } else { 0.0 })),
                 Value::ObjectId(_) => assert_eq!(result, None), // ObjectId cannot be converted to
-                // f64
+                _ => assert_eq!(result, None), // Other types cannot be converted to f64
             }
         }
 
         #[test]
         fn prop_value_as_str(value in any::<Value>()) {
-            let result = value.as_str();
+            let result = value.to_str();
             match value {
                 Value::Null => assert_eq!(result, None),
                 Value::I32(i) => assert_eq!(result, Some(i.to_string())),
@@ -533,7 +676,7 @@ mod tests {
                 Value::String(s) => assert_eq!(result, Some(s)),
                 Value::Bool(b) => assert_eq!(result, Some(if b { "true".to_string() } else { "false".to_string() })),
                 Value::ObjectId(oid) => assert_eq!(result, None), // ObjectId cannot be converted
-                // to String
+                _ => assert_eq!(result, None), // Other types cannot be converted to String
             }
         }
 
@@ -556,7 +699,7 @@ mod tests {
             prop_assert!(value.as_i32().is_none());
             prop_assert!(value.as_i64().is_none());
             prop_assert!(value.as_f64().is_none());
-            prop_assert!(value.as_str().is_none());
+            prop_assert!(value.to_str().is_none());
         }
     }
 }
