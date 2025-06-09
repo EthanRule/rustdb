@@ -4,11 +4,12 @@ use proptest::arbitrary::Arbitrary;
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Instant;
 use std::time::SystemTime;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ObjectId {
     bytes: [u8; 12],
 }
