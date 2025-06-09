@@ -66,4 +66,28 @@ impl Document {
 
         cur
     }
+
+    pub fn insert_field(&mut self, input: String, val: Value) {
+        if let Some(Value::Object(map)) = self.data.get_mut(&input) {
+            map.insert(input, val);
+        } else {
+            self.data.insert(input, val);
+        }
+    }
+
+    pub fn update_field(&mut self, input: String, val: Value) {
+        if let Some(existing) = self.data.get_mut(&input) {
+            *existing = val;
+        } else {
+            self.data.insert(input, val);
+        }
+    }
+
+    pub fn upsert_field(&mut self, input: String, val: Value) {
+        if let Some(existing) = self.data.get_mut(&input) {
+            *existing = val;
+        } else {
+            self.data.insert(input, val);
+        }
+    }
 }
