@@ -1,10 +1,14 @@
 use crate::document::object_id::ObjectId;
 use crate::document::types::Value;
+use crate::error::DatabaseError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+const MAX_DOCUMENT_SIZE: usize = 16 * 1024 * 1024; // 16mb
+const MAX_NAME_LENGTH: usize = 100; // 100 chars
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct Document {
+pub struct Document {
     data: BTreeMap<String, Value>,
     id: Value,
 }
@@ -36,8 +40,8 @@ impl Document {
         self.data.get(input)
     }
 
-    pub fn set(&mut self, input: String, val: Value) {
-        self.data.insert(input, val);
+    pub fn set<S: Into<String>>(&mut self, input: S, val: Value) {
+        self.data.insert(input.into(), val);
     }
 
     pub fn remove(&mut self, input: &str) -> Option<Value> {
@@ -67,27 +71,41 @@ impl Document {
         cur
     }
 
-    pub fn insert_field(&mut self, input: String, val: Value) {
-        if let Some(Value::Object(map)) = self.data.get_mut(&input) {
-            map.insert(input, val);
-        } else {
-            self.data.insert(input, val);
+    pub fn get_id(&self) -> Option<&ObjectId> {
+        match &self.id {
+            Value::ObjectId(oid) => Some(oid),
+            _ => return None,
         }
     }
 
-    pub fn update_field(&mut self, input: String, val: Value) {
-        if let Some(existing) = self.data.get_mut(&input) {
-            *existing = val;
-        } else {
-            self.data.insert(input, val);
+    pub fn ensure_id(&mut self) -> &ObjectId {
+        // Check if id is already an ObjectId
+        if let Value::ObjectId(ref oid) = self.id {
+            return oid;
         }
-    }
 
-    pub fn upsert_field(&mut self, input: String, val: Value) {
-        if let Some(existing) = self.data.get_mut(&input) {
-            *existing = val;
+        // Otherwise create and set a new ObjectId
+        let new_id = ObjectId::new();
+        self.id = Value::ObjectId(new_id);
+
+        if let Value::ObjectId(ref oid) = self.id {
+            oid
         } else {
-            self.data.insert(input, val);
+            unreachable!("Document id should always be ObjectId after ensure_id");
         }
     }
+}
+
+// Returns the size of the document in bytes
+fn document_size_validation(document: &str) -> bool {
+    document.len() <= MAX_DOCUMENT_SIZE
+}
+
+fn document_name_validation(name: &str) -> bool {
+    !name.is_empty() && name.chars().count() <= MAX_NAME_LENGTH
+}
+
+// Combine both functions for normal calls outside of this file.
+pub fn validate_document(document: &str, name: &str) -> bool {
+    document_size_validation(document) && document_name_validation(name)
 }
