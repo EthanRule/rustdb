@@ -298,6 +298,31 @@ impl Value {
             _ => None,
         }
     }
+
+    pub fn from_json_value(v: serde_json::Value) -> Self {
+        match v {
+            serde_json::Value::Bool(b) => Value::Bool(b),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Value::I32(i as i32)
+                } else if let Some(f) = n.as_f64() {
+                    Value::F64(f)
+                } else {
+                    Value::I32(0)
+                }
+            }
+            serde_json::Value::String(s) => Value::String(s),
+            serde_json::Value::Array(arr) => {
+                Value::Array(arr.into_iter().map(Value::from_json_value).collect())
+            }
+            serde_json::Value::Object(obj) => Value::Object(
+                obj.into_iter()
+                    .map(|(k, v)| (k, Value::from_json_value(v)))
+                    .collect(),
+            ),
+            serde_json::Value::Null => Value::Null, // if you have this variant
+        }
+    }
 }
 
 #[cfg(test)]
