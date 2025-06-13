@@ -80,10 +80,8 @@ impl fmt::Display for Value {
                 write!(f, "[{}]", elements.join(", "))
             }
             Value::Object(obj) => {
-                let elements: Vec<String> = obj
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.to_string()))
-                    .collect();
+                let elements: Vec<String> =
+                    obj.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
                 write!(f, "{{{}}}", elements.join(", "))
             }
             Value::DateTime(dt) => write!(f, "{}", dt.to_rfc3339()),
@@ -170,8 +168,8 @@ impl Value {
                 _ => None,
             },
             Value::String(x) => match x {
-                val if val.to_lowercase() == String::from("true") => Some(true),
-                val if val.to_lowercase() == String::from("false") => Some(false),
+                val if val.to_lowercase() == *"true" => Some(true),
+                val if val.to_lowercase() == *"false" => Some(false),
                 _ => None,
             },
             Value::Bool(x) => Some(*x),
@@ -245,8 +243,8 @@ impl Value {
                 true => Some(String::from("true")),
                 false => Some(String::from("false")),
             },
-            Value::ObjectId(oid) => None, // ObjectId cannot be converted to String
-            _ => None,                    // Other types cannot be converted to String
+            Value::ObjectId(_) => None, // ObjectId cannot be converted to String
+            _ => None,                  // Other types cannot be converted to String
         }
     }
 

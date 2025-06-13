@@ -34,6 +34,12 @@ impl Arbitrary for ObjectId {
     }
 }
 
+impl Default for ObjectId {
+    fn default() -> Self {
+        ObjectId::new()
+    }
+}
+
 impl ObjectId {
     pub fn new() -> Self {
         let mut bytes = [0u8; 12];
@@ -44,7 +50,7 @@ impl ObjectId {
 
         bytes[0..4].copy_from_slice(&now.to_be_bytes());
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         rng.fill(&mut bytes[4..]);
 
         ObjectId { bytes }
@@ -69,7 +75,9 @@ impl ObjectId {
 
     pub fn timestamp(&self) -> DateTime<Utc> {
         let ts = u32::from_be_bytes(self.bytes[0..4].try_into().unwrap());
-        Utc.timestamp(ts as i64, 0)
+        Utc.timestamp_opt(ts as i64, 0)
+            .single()
+            .expect("panic on timestamp fn in object.rs")
     }
 }
 
