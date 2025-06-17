@@ -13,6 +13,7 @@ pub mod server;
 pub mod storage;
 pub use crate::document::types::Value;
 pub use crate::document::Document;
+pub use crate::document::bson;
 
 pub fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));

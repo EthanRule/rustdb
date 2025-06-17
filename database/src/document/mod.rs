@@ -1,5 +1,6 @@
 pub mod object_id;
 pub mod types;
+pub mod bson;
 
 use crate::document::object_id::ObjectId;
 use crate::document::types::Value;
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 // This file defines the Document struct used for storing a BTreeMap of <String, Value> pairs.
-// For examples on how to use the Document struct, scroll to the bottom.
+// To see examples of Document struct usages, scroll to the bottom.
 
 const MAX_DOCUMENT_SIZE: usize = 16 * 1024 * 1024; // 16mb
 const MAX_NAME_LENGTH: usize = 100; // 100 chars
