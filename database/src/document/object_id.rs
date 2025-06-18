@@ -101,7 +101,6 @@ pub fn object_id_benchmark() {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use proptest::prelude::*;
 
     #[test]
     fn test_create_new_object_id() {
@@ -151,7 +150,7 @@ mod tests {
         bytes[0..4].copy_from_slice(&ts_bytes);
         let object = ObjectId::from_bytes(bytes);
         let dt = object.timestamp();
-        assert_eq!(dt, Utc.ymd(2025, 1, 1).and_hms(0, 0, 0));
+        assert_eq!(dt, Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).single().unwrap());
     }
 
     // -- BENCHMARK TESTS ----

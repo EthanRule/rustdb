@@ -699,7 +699,7 @@ mod tests {
                 Value::F64(f) => assert_eq!(result, Some(f.to_string())),
                 Value::String(s) => assert_eq!(result, Some(s)),
                 Value::Bool(b) => assert_eq!(result, Some(if b { "true".to_string() } else { "false".to_string() })),
-                Value::ObjectId(oid) => assert_eq!(result, None), // ObjectId cannot be converted
+                Value::ObjectId(_oid) => assert_eq!(result, None), // ObjectId cannot be converted
                 _ => assert_eq!(result, None), // Other types cannot be converted to String
             }
         }

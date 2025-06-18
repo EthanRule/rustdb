@@ -1,6 +1,7 @@
 pub mod object_id;
 pub mod types;
 pub mod bson;
+pub mod validator;
 
 use crate::document::object_id::ObjectId;
 use crate::document::types::Value;
