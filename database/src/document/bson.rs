@@ -1170,86 +1170,98 @@ pub fn decode_value(data: &[u8], bson_type: u8) -> Result<(Value, usize), BsonEr
         TYPE_NULL => Ok((Value::Null, 0)),
         TYPE_BOOL => {
             if data.len() < 1 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 1, actual: data.len() });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 1,
+                    actual: data.len()
+                });
             }
             Ok((Value::Bool(data[0] != 0), 1))
         }
         TYPE_INT32 => {
             if data.len() < 4 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 4, actual: data.len() });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 4,
+                    actual: data.len()
+                });
             }
             let i = cursor.read_i32::<LittleEndian>()?;
             Ok((Value::I32(i), 4))
         }
         TYPE_INT64 => {
             if data.len() < 8 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 8, actual: data.len() });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 8,
+                    actual: data.len()
+                });
             }
             let i = cursor.read_i64::<LittleEndian>()?;
             Ok((Value::I64(i), 8))
         }
         TYPE_DOUBLE => {
             if data.len() < 8 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 8, actual: data.len() });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 8,
+                    actual: data.len()
+                });
             }
             let f = cursor.read_f64::<LittleEndian>()?;
             Ok((Value::F64(f), 8))
         }
         TYPE_STRING => {
-            if data.len() < 4 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 4, actual: data.len() });
-            }
             let length = cursor.read_i32::<LittleEndian>()?;
             if length <= 0 {
                 return Err(BsonError::InvalidStringLength(length));
             }
             if data.len() < length as usize + 4 {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: length as usize + 4, 
-                    actual: data.len() 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: length as usize + 4,
+                    actual: data.len()
                 });
             }
             let string_bytes = &data[4..4 + (length as usize - 1)];
             let s = String::from_utf8(string_bytes.to_vec())
                 .map_err(|_| BsonError::InvalidString)?;
-            Ok((Value::String(s), 4 + length as usize))
+            Ok((Value::String(s), length as usize + 4))
         }
         TYPE_OBJECTID => {
             if data.len() < 12 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 12, actual: data.len() });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 12,
+                    actual: data.len()
+                });
             }
             let mut bytes = [0u8; 12];
             bytes.copy_from_slice(&data[..12]);
             Ok((Value::ObjectId(ObjectId::from_bytes(bytes)), 12))
         }
         TYPE_BINARY => {
-            if data.len() < 5 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 5, actual: data.len() });
-            }
             let length = cursor.read_i32::<LittleEndian>()?;
             if length < 0 {
                 return Err(BsonError::InvalidBinaryLength(length));
             }
             if data.len() < (length as usize + 5) {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: length as usize + 5, 
-                    actual: data.len() 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: length as usize + 5,
+                    actual: data.len()
                 });
             }
             let _subtype = data[4];
             let binary_data = data[5..(5 + length as usize)].to_vec();
-            Ok((Value::Binary(binary_data), 5 + length as usize))
+            Ok((Value::Binary(binary_data), length as usize + 5))
         }
         TYPE_DATETIME => {
             if data.len() < 8 {
-                return Err(BsonError::UnexpectedEndOfData { expected: 8, actual: data.len() });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 8,
+                    actual: data.len()
+                });
             }
             let timestamp = cursor.read_i64::<LittleEndian>()?;
             let dt = chrono::DateTime::from_timestamp_millis(timestamp)
                 .ok_or(BsonError::InvalidTimestamp(timestamp))?;
             Ok((Value::DateTime(dt), 8))
         }
-        _ => Err(BsonError::InvalidType(bson_type)),
+        _ => Err(BsonError::InvalidType(bson_type))
     };
     
     result

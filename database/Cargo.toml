@@ -22,3 +22,10 @@ tempfile = "3.20.0"
 rand = "0.9.1"
 hex = "0.4.3"
 byteorder = "1.4"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "bson_benchmarks"
+harness = false
