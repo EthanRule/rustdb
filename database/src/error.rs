@@ -10,6 +10,7 @@ pub enum DatabaseError {
     Index(String),
     Network(String),
     Validation(String),
+    InvalidChecksum,
     Io(io::Error),
     Json(serde_json::Error),
 }
@@ -23,6 +24,7 @@ impl fmt::Display for DatabaseError {
             DatabaseError::Index(msg) => write!(f, "Index error: {}", msg),
             DatabaseError::Network(msg) => write!(f, "Network error: {}", msg),
             DatabaseError::Validation(msg) => write!(f, "Validation error: {}", msg),
+            DatabaseError::InvalidChecksum => write!(f, "Invalid page checksum"),
             DatabaseError::Io(err) => write!(f, "IO error: {}", err),
             DatabaseError::Json(err) => write!(f, "JSON error: {}", err),
         }
