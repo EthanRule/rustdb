@@ -2,7 +2,7 @@ use crate::error::DatabaseError;
 use std::mem;
 
 // A page should be of a fixed size.
-const PAGE_SIZE: usize = 8192;
+pub const PAGE_SIZE: usize = 8192;
 
 // The type of the page, indicating what kind of data it stores.
 // It's important to use a fixed-size representation for enums that are part of a data structure

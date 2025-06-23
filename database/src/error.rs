@@ -1,3 +1,4 @@
+use bincode;
 use serde_json;
 use std::fmt;
 use std::io;
@@ -13,6 +14,7 @@ pub enum DatabaseError {
     InvalidChecksum,
     Io(io::Error),
     Json(serde_json::Error),
+    Bincode(bincode::Error),
 }
 
 impl fmt::Display for DatabaseError {
@@ -27,6 +29,7 @@ impl fmt::Display for DatabaseError {
             DatabaseError::InvalidChecksum => write!(f, "Invalid page checksum"),
             DatabaseError::Io(err) => write!(f, "IO error: {}", err),
             DatabaseError::Json(err) => write!(f, "JSON error: {}", err),
+            DatabaseError::Bincode(err) => write!(f, "Bincode error: {}", err),
         }
     }
 }
@@ -36,6 +39,7 @@ impl std::error::Error for DatabaseError {
         match self {
             DatabaseError::Io(err) => Some(err),
             DatabaseError::Json(err) => Some(err),
+            DatabaseError::Bincode(err) => Some(err),
             _ => None,
         }
     }
