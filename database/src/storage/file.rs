@@ -8,9 +8,6 @@ use std::path::Path;
 
 const DATABASE_VERSION: u8 = 1;
 
-/// The header for a database file.
-///
-/// It contains metadata about the database, such as the version and the number of pages.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct FileHeader {
     version: u8,
@@ -75,27 +72,16 @@ impl FileHeader {
 
     /// Returns the serialized size of the header.
     fn size() -> u64 {
-        // This is a bit of a hack, but it's a reliable way to get the serialized size
-        // without hardcoding it.
         bincode::serialized_size(&Self::new()).unwrap()
     }
 }
 
-/// Represents the database file on disk.
-///
-/// This struct provides an API for interacting with the database file, including
-/// creating, opening, reading, and writing pages. It also handles file locking
-/// to prevent concurrent access.
 pub struct DatabaseFile {
     file: File,
     header: FileHeader,
 }
 
 impl DatabaseFile {
-    /// Creates a new database file at the given path.
-    ///
-    /// This will create a new file, write the initial header, and acquire an
-    /// exclusive lock on the file.
     pub fn create(path: &Path) -> Result<Self, DatabaseError> {
         let file = OpenOptions::new()
             .read(true)
@@ -228,22 +214,22 @@ impl DatabaseFile {
 mod tests {
     use super::*;
     use crate::storage::page::PageType;
-    use tempfile::NamedTempFile;
+    use tempfile;
 
     #[test]
     fn test_create_and_open_db_file() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("test.db");
 
         // Create
         {
-            let db_file = DatabaseFile::create(path).unwrap();
+            let db_file = DatabaseFile::create(&path).unwrap();
             assert_eq!(db_file.page_count(), 0);
         }
 
         // Open
         {
-            let db_file = DatabaseFile::open(path).unwrap();
+            let db_file = DatabaseFile::open(&path).unwrap();
             assert_eq!(db_file.header.version, DATABASE_VERSION);
             assert_eq!(db_file.page_count(), 0);
         }
@@ -251,9 +237,9 @@ mod tests {
 
     #[test]
     fn test_allocate_and_write_read_page() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut db_file = DatabaseFile::create(path).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("test.db");
+        let mut db_file = DatabaseFile::create(&path).unwrap();
 
         // Allocate a page
         let page_id = db_file.allocate_page().unwrap();
@@ -274,9 +260,9 @@ mod tests {
 
     #[test]
     fn test_multiple_pages() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut db_file = DatabaseFile::create(path).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("test.db");
+        let mut db_file = DatabaseFile::create(&path).unwrap();
 
         let num_pages = 5;
         let mut pages = Vec::new();
@@ -299,9 +285,9 @@ mod tests {
 
     #[test]
     fn test_read_non_existent_page() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let mut db_file = DatabaseFile::create(path).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("test.db");
+        let mut db_file = DatabaseFile::create(&path).unwrap();
 
         let result = db_file.read_page(0);
         assert!(result.is_err());
@@ -309,9 +295,9 @@ mod tests {
 
     #[test]
     fn test_sync() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-        let db_file = DatabaseFile::create(path).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("test.db");
+        let db_file = DatabaseFile::create(&path).unwrap();
         assert!(db_file.sync().is_ok());
     }
 }

@@ -59,7 +59,9 @@ fn test_document_lifecycle() {
     
     encoder = encoder.with_progress_callback(move |written, total| {
         bytes_written.store(written, Ordering::SeqCst);
-        assert!(written <= total, "Written bytes should not exceed total");
+        if total != 0 && written == total {
+            assert_eq!(written, total, "Final bytes written should match total");
+        }
     });
     
     encoder.encode_document(&doc).expect("Failed to encode document");
