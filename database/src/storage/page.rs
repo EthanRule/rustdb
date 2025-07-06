@@ -169,6 +169,7 @@ struct PageHeader {
 // This struct could hold metadata specific to certain page types.
 // For example, for a B-Tree index page, it might store the level of the node in the tree.
 // This would typically be part of the `data` field of the `Page`, not a separate field in `Page` struct.
+#[allow(dead_code)]
 struct PageMetadata {
 
 }

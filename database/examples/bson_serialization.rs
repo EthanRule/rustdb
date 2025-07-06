@@ -1,6 +1,6 @@
 use database::{Document, Value, bson::{BsonEncoder, BsonDecoder}};
 use std::collections::BTreeMap;
-use std::io::{Cursor, Seek};
+use std::io::{Cursor};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn main() {
