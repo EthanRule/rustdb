@@ -509,9 +509,9 @@ mod tests {
         let mut lru = LruList::new();
         
         // Test adding nodes
-        let node1 = lru.add_to_front(1);
+        let _node1 = lru.add_to_front(1);
         let node2 = lru.add_to_front(2);
-        let node3 = lru.add_to_front(3);
+        let _node3 = lru.add_to_front(3);
         
         assert_eq!(lru.nodes.len(), 3);
         assert_eq!(lru.free_nodes.len(), 0);
