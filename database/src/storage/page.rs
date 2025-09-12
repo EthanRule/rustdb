@@ -3,6 +3,7 @@ use std::mem;
 
 // A page should be of a fixed size.
 pub const PAGE_SIZE: usize = 8192;
+pub const PAGE_HEADER_SIZE: usize = 16; // Size of PageHeader in bytes
 
 // The type of the page, indicating what kind of data it stores.
 // It's important to use a fixed-size representation for enums that are part of a data structure
@@ -37,6 +38,7 @@ impl From<PageType> for u8 {
 
 // A Page is a fixed-size block of data as it would be on disk.
 // The layout is a PageHeader followed by the page's content.
+#[repr(C, align(8))]
 pub struct Page {
     data: [u8; PAGE_SIZE],
 }
@@ -72,7 +74,7 @@ impl Page {
 
         page
     }
-
+    
     /// Deserializes a page from a byte array.
     ///
     /// This function takes a raw byte array, creates a Page from it, and verifies its
@@ -137,6 +139,11 @@ impl Page {
         self.calculate_checksum() == self.header().checksum
     }
 
+    /// Sets the checksum value in the page header.
+    pub fn set_checksum(&mut self, checksum: u32) {
+        self.header_mut().checksum = checksum;
+    }
+
     /// Returns the amount of free space on the page.
     pub fn get_free_space(&self) -> u16 {
         self.header().free_space
@@ -146,6 +153,16 @@ impl Page {
     /// This should be called whenever data is added to or removed from the page.
     pub fn update_free_space(&mut self, new_free_space: u16) {
         self.header_mut().free_space = new_free_space;
+    }
+
+    // Safe header access methods
+    pub fn get_header(&self) -> PageHeader {
+        PageHeader::from_bytes(&self.data[..PAGE_HEADER_SIZE])
+    }
+    
+    fn set_header(&mut self, header: PageHeader) {
+        let header_bytes = header.to_bytes();
+        self.data[..PAGE_HEADER_SIZE].copy_from_slice(&header_bytes);
     }
 }
 
@@ -164,6 +181,53 @@ struct PageHeader {
     // When the page is read from disk, the checksum can be recalculated
     // and compared with the stored one to ensure the data is not corrupted.
     checksum: u32,
+}
+
+// Add safe serialization methods to PageHeader
+impl PageHeader {
+    pub fn to_bytes(&self) -> [u8; PAGE_HEADER_SIZE] {
+        let mut bytes = [0u8; PAGE_HEADER_SIZE];
+        
+        // Use safe byte operations instead of pointer casting
+        bytes[0..8].copy_from_slice(&self.page_id.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.checksum.to_le_bytes());
+        bytes[12..14].copy_from_slice(&self.free_space.to_le_bytes());
+        bytes[14] = self.page_type as u8;
+        // byte 15 is padding
+        
+        bytes
+    }
+    
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert!(bytes.len() >= PAGE_HEADER_SIZE);
+        
+        let page_id = u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
+        
+        let checksum = u32::from_le_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11],
+        ]);
+        
+        let free_space = u16::from_le_bytes([
+            bytes[12], bytes[13],
+        ]);
+        
+        let page_type = match bytes[14] {
+            0 => PageType::Data,
+            1 => PageType::Index,
+            2 => PageType::Metadata,
+            _ => PageType::Data, // Default fallback
+        };
+        
+        Self {
+            page_id,
+            checksum,
+            free_space,
+            page_type,
+        }
+    }
 }
 
 // This struct could hold metadata specific to certain page types.

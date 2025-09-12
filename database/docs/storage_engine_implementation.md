@@ -16,11 +16,13 @@ I've successfully implemented the `insert_document` function in the `StorageEngi
 ### 🔧 Implementation Details
 
 **Function Signature:**
+
 ```rust
 pub fn insert_document(&mut self, document: &Document) -> Result<DocumentId>
 ```
 
 **Algorithm:**
+
 1. Serialize the document to BSON bytes
 2. Iterate through all existing pages in the buffer pool
 3. For each page:
@@ -32,6 +34,7 @@ pub fn insert_document(&mut self, document: &Document) -> Result<DocumentId>
 4. Return error if no existing page has sufficient space
 
 **Error Cases:**
+
 - Document serialization fails
 - No existing pages have sufficient space (page allocation not yet implemented)
 - Page insertion fails due to fragmentation or other issues
@@ -74,6 +77,7 @@ match storage_engine.insert_document(&doc) {
 ### ✅ Tests
 
 Created comprehensive tests covering:
+
 - Basic insertion attempt (fails as expected due to no pages)
 - BSON serialization functionality
 - DocumentId accessor methods
