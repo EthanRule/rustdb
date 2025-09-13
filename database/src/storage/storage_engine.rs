@@ -10,30 +10,33 @@
 // TODO: Consider adding a tombstone Vacuum
 
 use crate::{
-    storage::{buffer_pool::BufferPool, file::DatabaseFile, page_layout::PageLayout}, 
+    document::bson::serialize_document,
+    storage::{
+        buffer_pool::BufferPool, file::DatabaseFile, page::Page, page::PageType,
+        page_layout::PageLayout,
+    },
     Document,
-    document::bson::serialize_document
 };
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct DocumentId {
-    page_id: u32,
+    page_id: u64,
     slot_id: u16,
 }
 
 impl DocumentId {
     /// Create a new DocumentId
-    pub fn new(page_id: u32, slot_id: u16) -> Self {
+    pub fn new(page_id: u64, slot_id: u16) -> Self {
         Self { page_id, slot_id }
     }
-    
+
     /// Get the page ID where the document is stored
-    pub fn page_id(&self) -> u32 {
+    pub fn page_id(&self) -> u64 {
         self.page_id
     }
-    
+
     /// Get the slot ID within the page where the document is stored
     pub fn slot_id(&self) -> u16 {
         self.slot_id
@@ -67,7 +70,7 @@ impl StorageEngine {
             // Pin the page to get mutable access
             if let Ok(page) = self.buffer_pool.pin_page(page_id) {
                 let free_space = page.get_free_space() as usize;
-                
+
                 // Check if document can fit in this page
                 if document_size <= free_space {
                     // Insert the document using PageLayout
@@ -75,9 +78,9 @@ impl StorageEngine {
                         Ok(slot_id) => {
                             // Mark the page as dirty and unpin it
                             self.buffer_pool.unpin_page(page_id, true); // true = is_dirty
-                            return Ok(DocumentId { 
-                                page_id: page_id as u32, 
-                                slot_id 
+                            return Ok(DocumentId {
+                                page_id: page_id,
+                                slot_id,
                             });
                         }
                         Err(_) => {
@@ -92,11 +95,18 @@ impl StorageEngine {
             }
         }
 
-        // 3. No existing page has enough space, need to create a new page
-        // For now, we'll return an error since page allocation isn't implemented yet
-        Err(anyhow::anyhow!(
-            "No existing page has sufficient space ({} bytes needed) and new page allocation is not yet implemented", 
-            document_size
-        ))
+        // Page doesen't exist, or not enough space? Allocate more space and insert a fresh page.
+        let new_page_id = self.database_file.allocate_page()?;
+
+        let page = self.buffer_pool.pin_page(new_page_id)?;
+
+        let slot_id = PageLayout::insert_document(page, &document_bytes)?;
+
+        self.buffer_pool.unpin_page(new_page_id, true);
+
+        Ok(DocumentId {
+            page_id: new_page_id,
+            slot_id: slot_id,
+        })
     }
 }
