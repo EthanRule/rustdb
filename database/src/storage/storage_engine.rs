@@ -68,7 +68,7 @@ impl StorageEngine {
         let page_ids = self.buffer_pool.get_all_page_ids();
         for page_id in page_ids {
             // Pin the page to get mutable access
-            if let Ok(page) = self.buffer_pool.pin_page(page_id) {
+            if let Ok(page) = self.buffer_pool.pin_page(page_id, &mut self.database_file) {
                 let free_space = page.get_free_space() as usize;
 
                 // Check if document can fit in this page
@@ -98,7 +98,9 @@ impl StorageEngine {
         // Page doesen't exist, or not enough space? Allocate more space and insert a fresh page.
         let new_page_id = self.database_file.allocate_page()?;
 
-        let page = self.buffer_pool.pin_page(new_page_id)?;
+        let page = self
+            .buffer_pool
+            .pin_page(new_page_id, &mut self.database_file)?;
 
         let slot_id = PageLayout::insert_document(page, &document_bytes)?;
 
