@@ -11,10 +11,7 @@
 
 use crate::{
     document::bson::serialize_document,
-    storage::{
-        buffer_pool::BufferPool, file::DatabaseFile, page::Page, page::PageType,
-        page_layout::PageLayout,
-    },
+    storage::{buffer_pool::BufferPool, file::DatabaseFile, page_layout::PageLayout},
     Document,
 };
 use anyhow::Result;

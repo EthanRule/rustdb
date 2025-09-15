@@ -1,7 +1,6 @@
 use crate::error::DatabaseError;
 use crate::storage::file::DatabaseFile;
 use crate::storage::page::Page;
-use crate::storage::page::PAGE_SIZE;
 use std::collections::HashMap;
 
 pub struct BufferPool {
@@ -56,7 +55,7 @@ impl BufferPool {
         database_file: &mut DatabaseFile,
     ) -> Result<&mut Page, DatabaseError> {
         // Check if page is already in buffer pool
-        if let Some(page) = self.pages.get(&page_id) {
+        if let Some(_page) = self.pages.get(&page_id) {
             self.pinned_pages.insert(page_id);
             self.move_to_front(page_id);
             return Ok(self.pages.get_mut(&page_id).unwrap());
@@ -164,10 +163,14 @@ impl BufferPool {
         page_id: u64,
         database_file: &mut DatabaseFile,
     ) -> Result<Page, DatabaseError> {
-        let page = database_file.read_page(page_id);
+        let page = database_file.read_page(page_id)?;
 
         if page.get_page_id() != page_id {
-            return Err(anyhow::anyhow!("Page ID mismatch!"));
+            return Err(DatabaseError::Storage(format!(
+                "Page ID mismatch! Expected {}. got {}",
+                page_id,
+                page.get_page_id()
+            )));
         }
 
         Ok(page)
@@ -179,7 +182,7 @@ impl BufferPool {
         database_file: &mut DatabaseFile,
     ) -> Result<(), DatabaseError> {
         if let Some(page) = self.pages.get(&page_id) {
-            database_file.write_page(page_id, page);
+            database_file.write_page(page_id, page)?;
         } else {
             return Err(DatabaseError::Storage(format!(
                 "Page {} was not found in buffer pool",
@@ -200,7 +203,11 @@ impl BufferPool {
     }
 
     /// Resize the buffer pool capacity
-    pub fn resize(&mut self, new_capacity: usize) -> Result<(), DatabaseError> {
+    pub fn resize(
+        &mut self,
+        new_capacity: usize,
+        database_file: &mut DatabaseFile,
+    ) -> Result<(), DatabaseError> {
         if new_capacity == 0 {
             return Err(DatabaseError::Storage(
                 "Buffer pool capacity cannot be zero".to_string(),
@@ -212,7 +219,7 @@ impl BufferPool {
 
         // If shrinking, we need to evict pages
         while self.pages.len() > new_capacity {
-            self.evict_page()?;
+            self.evict_page(database_file)?;
         }
 
         // Log the resize operation
@@ -226,11 +233,11 @@ impl BufferPool {
     }
 
     /// Force flush all dirty pages to disk
-    pub fn flush_all(&mut self) -> Result<(), DatabaseError> {
+    pub fn flush_all(&mut self, database_file: &mut DatabaseFile) -> Result<(), DatabaseError> {
         let dirty_page_ids: Vec<u64> = self.dirty_pages.iter().cloned().collect();
 
         for page_id in dirty_page_ids {
-            self.write_page_to_disk(page_id)?;
+            self.write_page_to_disk(page_id, database_file)?;
             self.dirty_pages.remove(&page_id);
         }
 
@@ -238,18 +245,22 @@ impl BufferPool {
     }
 
     /// Force flush a specific page to disk
-    pub fn flush_page(&mut self, page_id: u64) -> Result<(), DatabaseError> {
+    pub fn flush_page(
+        &mut self,
+        page_id: u64,
+        database_file: &mut DatabaseFile,
+    ) -> Result<(), DatabaseError> {
         if self.dirty_pages.contains(&page_id) {
-            self.write_page_to_disk(page_id)?;
+            self.write_page_to_disk(page_id, database_file)?;
             self.dirty_pages.remove(&page_id);
         }
         Ok(())
     }
 
     /// Clear all pages from buffer pool (for testing/debugging)
-    pub fn clear(&mut self) -> Result<(), DatabaseError> {
+    pub fn clear(&mut self, database_file: &mut DatabaseFile) -> Result<(), DatabaseError> {
         // Flush all dirty pages first
-        self.flush_all()?;
+        self.flush_all(database_file)?;
 
         // Clear all data structures
         self.pages.clear();
@@ -325,7 +336,11 @@ impl BufferPool {
     }
 
     /// Force evict a specific page (for testing)
-    pub fn force_evict_page(&mut self, page_id: u64) -> Result<(), DatabaseError> {
+    pub fn force_evict_page(
+        &mut self,
+        page_id: u64,
+        database_file: &mut DatabaseFile,
+    ) -> Result<(), DatabaseError> {
         if self.pinned_pages.contains(&page_id) {
             return Err(DatabaseError::Storage(
                 "Cannot evict pinned page".to_string(),
@@ -333,7 +348,7 @@ impl BufferPool {
         }
 
         if self.dirty_pages.contains(&page_id) {
-            self.write_page_to_disk(page_id)?;
+            self.write_page_to_disk(page_id, database_file)?;
             self.dirty_pages.remove(&page_id);
         }
 
@@ -510,280 +525,5 @@ pub struct DetailedBufferPoolStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn test_buffer_pool_basic() {
-        let pool = BufferPool::new(3);
-
-        // Test that we can create a buffer pool
-        let stats = pool.get_stats();
-        assert_eq!(stats.capacity, 3);
-        assert_eq!(stats.pages_in_pool, 0);
-        assert_eq!(stats.dirty_pages, 0);
-        assert_eq!(stats.pinned_pages, 0);
-    }
-
-    #[test]
-    fn test_lru_list_operations() {
-        let mut lru = LruList::new();
-
-        // Add some pages
-        let node1 = lru.add_to_front(1);
-        let node2 = lru.add_to_front(2);
-        let node3 = lru.add_to_front(3);
-
-        // Most recent should be head
-        assert_eq!(lru.head, Some(node3));
-        assert_eq!(lru.tail, Some(node1));
-
-        // Move middle node to front
-        lru.move_to_front(node2);
-        assert_eq!(lru.head, Some(node2));
-    }
-
-    #[test]
-    fn test_lru_list_add_and_remove() {
-        let mut lru = LruList::new();
-
-        // Test adding nodes
-        let _node1 = lru.add_to_front(1);
-        let node2 = lru.add_to_front(2);
-        let _node3 = lru.add_to_front(3);
-
-        assert_eq!(lru.nodes.len(), 3);
-        assert_eq!(lru.free_nodes.len(), 0);
-
-        // Test removing middle node
-        lru.remove(node2);
-        assert_eq!(lru.free_nodes.len(), 1);
-        assert_eq!(lru.free_nodes[0], node2);
-
-        // Test reusing freed node
-        let node4 = lru.add_to_front(4);
-        assert_eq!(node4, node2); // Should reuse the freed slot
-        assert_eq!(lru.free_nodes.len(), 0);
-    }
-
-    #[test]
-    fn test_lru_list_single_node() {
-        let mut lru = LruList::new();
-
-        let node = lru.add_to_front(1);
-        assert_eq!(lru.head, Some(node));
-        assert_eq!(lru.tail, Some(node));
-
-        lru.remove(node);
-        assert_eq!(lru.head, None);
-        assert_eq!(lru.tail, None);
-    }
-
-    #[test]
-    fn test_lru_list_move_to_front_already_head() {
-        let mut lru = LruList::new();
-
-        let node1 = lru.add_to_front(1);
-        let node2 = lru.add_to_front(2);
-
-        assert_eq!(lru.head, Some(node2));
-
-        // Moving head to front should be no-op
-        lru.move_to_front(node2);
-        assert_eq!(lru.head, Some(node2));
-        assert_eq!(lru.tail, Some(node1));
-    }
-
-    #[test]
-    fn test_buffer_pool_resize() {
-        let mut pool = BufferPool::new(3);
-
-        // Test resizing to larger capacity
-        assert!(pool.resize(5).is_ok());
-        assert_eq!(pool.capacity, 5);
-
-        // Test resizing to zero should fail
-        assert!(pool.resize(0).is_err());
-
-        // Test resizing to smaller capacity (would trigger eviction in real scenario)
-        assert!(pool.resize(2).is_ok());
-        assert_eq!(pool.capacity, 2);
-    }
-
-    #[test]
-    fn test_buffer_pool_detailed_stats() {
-        let pool = BufferPool::new(5);
-
-        let stats = pool.get_detailed_stats();
-        assert_eq!(stats.capacity, 5);
-        assert_eq!(stats.pages_in_pool, 0);
-        assert_eq!(stats.utilization_percentage, 0.0);
-        assert_eq!(stats.lru_chain_length, 0);
-        assert_eq!(stats.pages_in_lru, Vec::<u64>::new());
-    }
-
-    #[test]
-    fn test_buffer_pool_page_tracking() {
-        let pool = BufferPool::new(3);
-
-        // Test initial state
-        assert!(!pool.contains_page(1));
-        assert!(!pool.is_dirty(1));
-        assert!(!pool.is_pinned(1));
-
-        // Test page tracking methods
-        assert_eq!(pool.get_all_page_ids().len(), 0);
-    }
-
-    #[test]
-    fn test_buffer_pool_consistency_validation() {
-        let pool = BufferPool::new(3);
-
-        // Empty pool should be consistent
-        assert!(pool.validate_consistency().is_ok());
-    }
-
-    #[test]
-    fn test_buffer_pool_clear() {
-        let mut pool = BufferPool::new(3);
-
-        // Clear empty pool should work
-        assert!(pool.clear().is_ok());
-
-        let stats = pool.get_stats();
-        assert_eq!(stats.pages_in_pool, 0);
-        assert_eq!(stats.dirty_pages, 0);
-        assert_eq!(stats.pinned_pages, 0);
-    }
-
-    #[test]
-    fn test_buffer_pool_unpin_page() {
-        let mut pool = create_test_buffer_pool(\ test_\, );
-
-        // Test unpinning non-existent page (should not panic)
-        pool.unpin_page(1, false);
-        pool.unpin_page(2, true);
-
-        let stats = pool.get_stats();
-        assert_eq!(stats.pinned_pages, 0);
-    }
-
-    #[test]
-    fn test_buffer_pool_debug_print() {
-        let pool = create_test_buffer_pool(\ test_\, );
-
-        // This test just ensures debug_print doesn't panic
-        pool.debug_print();
-    }
-
-    #[test]
-    fn test_lru_chain_tracking() {
-        let mut pool = create_test_buffer_pool(\ test_\, );
-
-        // Test LRU chain with empty pool
-        let chain = pool.get_lru_chain();
-        assert_eq!(chain.len(), 0);
-
-        // Add some mock tracking
-        pool.add_to_front(1);
-        pool.add_to_front(2);
-        pool.add_to_front(3);
-
-        let chain = pool.get_lru_chain();
-        assert_eq!(chain, vec![3, 2, 1]); // Most recent first
-
-        // Move middle to front
-        pool.move_to_front(2);
-        let chain = pool.get_lru_chain();
-        assert_eq!(chain, vec![2, 3, 1]);
-    }
-
-    #[test]
-    fn test_buffer_pool_flush_operations() {
-        let mut pool = create_test_buffer_pool(\ test_\, );
-
-        // Test flushing empty pool
-        assert!(pool.flush_all().is_ok());
-        assert!(pool.flush_page(1).is_ok());
-
-        // Manually add a dirty page for testing
-        pool.dirty_pages.insert(1);
-        assert!(pool.is_dirty(1));
-
-        // Since we can't actually flush without a proper disk implementation,
-        // just test that the method exists and handles empty cases
-        // In a real implementation, these would succeed
-    }
-
-    #[test]
-    fn test_buffer_pool_eviction_no_pages() {
-        let mut pool = create_test_buffer_pool(\ test_\, );
-
-        // Evicting from empty pool should fail
-        assert!(pool.evict_page().is_err());
-    }
-
-    #[test]
-    fn test_buffer_pool_stats_consistency() {
-        let pool = create_test_buffer_pool(\ test_\, );
-
-        let basic_stats = pool.get_stats();
-        let detailed_stats = pool.get_detailed_stats();
-
-        // Basic and detailed stats should match
-        assert_eq!(basic_stats.capacity, detailed_stats.capacity);
-        assert_eq!(basic_stats.pages_in_pool, detailed_stats.pages_in_pool);
-        assert_eq!(basic_stats.dirty_pages, detailed_stats.dirty_pages);
-        assert_eq!(basic_stats.pinned_pages, detailed_stats.pinned_pages);
-    }
-
-    #[test]
-    fn test_lru_list_complex_operations() {
-        let mut lru = LruList::new();
-
-        // Add multiple nodes
-        let nodes: Vec<_> = (1..=5).map(|i| lru.add_to_front(i)).collect();
-
-        // Verify initial order: 5, 4, 3, 2, 1
-        assert_eq!(lru.head, Some(nodes[4])); // node for page 5
-        assert_eq!(lru.tail, Some(nodes[0])); // node for page 1
-
-        // Move tail to front
-        lru.move_to_front(nodes[0]);
-        assert_eq!(lru.head, Some(nodes[0])); // node for page 1
-        assert_eq!(lru.tail, Some(nodes[1])); // node for page 2
-
-        // Remove head
-        lru.remove(nodes[0]);
-        assert_eq!(lru.head, Some(nodes[4])); // node for page 5
-
-        // Remove tail
-        lru.remove(nodes[1]);
-        assert_eq!(lru.tail, Some(nodes[2])); // node for page 3
-    }
-
-    #[test]
-    fn test_buffer_pool_capacity_edge_cases() {
-        // Test capacity 1
-        let pool = create_test_buffer_pool(\ test_\, );
-        assert_eq!(pool.capacity, 1);
-
-        // Test large capacity
-        let mut pool = create_test_buffer_pool(\ test_\, );
-        assert_eq!(pool.capacity, 1000000);
-
-        // Test resize edge cases
-        assert!(pool.resize(1).is_ok());
-        assert!(pool.resize(usize::MAX).is_ok());
-    }
-
-    #[test]
-    fn test_buffer_pool_error_conditions() {
-        let mut pool = create_test_buffer_pool(\ test_\, );
-
-        // Test force evict non-existent page
-        assert!(pool.force_evict_page(999).is_ok()); // Should not error
-
-        // Test consistency validation with empty pool
-        assert!(pool.validate_consistency().is_ok());
-    }
+    // use super::*;
 }

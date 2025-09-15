@@ -64,7 +64,7 @@ impl Page {
             free_space,
             checksum: 0, // Checksum is calculated after the header is written
         };
-        
+
         page.write_header(&header);
 
         // Now that the header is written, calculate the initial checksum for the page
@@ -74,7 +74,7 @@ impl Page {
 
         page
     }
-    
+
     /// Deserializes a page from a byte array.
     ///
     /// This function takes a raw byte array, creates a Page from it, and verifies its
@@ -159,7 +159,12 @@ impl Page {
     pub fn get_header(&self) -> PageHeader {
         PageHeader::from_bytes(&self.data[..PAGE_HEADER_SIZE])
     }
-    
+
+    pub fn get_page_id(&self) -> u64 {
+        self.get_header().page_id()
+    }
+
+    #[allow(dead_code)]
     fn set_header(&mut self, header: PageHeader) {
         let header_bytes = header.to_bytes();
         self.data[..PAGE_HEADER_SIZE].copy_from_slice(&header_bytes);
@@ -172,7 +177,7 @@ impl Page {
 // in the order they are defined, with C-like padding. This gives us a predictable
 // size and layout for serialization.
 #[repr(C)]
-struct PageHeader {
+pub struct PageHeader {
     page_id: u64,
     page_type: PageType,
     free_space: u16,
@@ -187,40 +192,35 @@ struct PageHeader {
 impl PageHeader {
     pub fn to_bytes(&self) -> [u8; PAGE_HEADER_SIZE] {
         let mut bytes = [0u8; PAGE_HEADER_SIZE];
-        
+
         // Use safe byte operations instead of pointer casting
         bytes[0..8].copy_from_slice(&self.page_id.to_le_bytes());
         bytes[8..12].copy_from_slice(&self.checksum.to_le_bytes());
         bytes[12..14].copy_from_slice(&self.free_space.to_le_bytes());
         bytes[14] = self.page_type as u8;
         // byte 15 is padding
-        
+
         bytes
     }
-    
+
     pub fn from_bytes(bytes: &[u8]) -> Self {
         assert!(bytes.len() >= PAGE_HEADER_SIZE);
-        
+
         let page_id = u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]);
-        
-        let checksum = u32::from_le_bytes([
-            bytes[8], bytes[9], bytes[10], bytes[11],
-        ]);
-        
-        let free_space = u16::from_le_bytes([
-            bytes[12], bytes[13],
-        ]);
-        
+
+        let checksum = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+
+        let free_space = u16::from_le_bytes([bytes[12], bytes[13]]);
+
         let page_type = match bytes[14] {
             0 => PageType::Data,
             1 => PageType::Index,
             2 => PageType::Metadata,
             _ => PageType::Data, // Default fallback
         };
-        
+
         Self {
             page_id,
             checksum,
@@ -228,15 +228,17 @@ impl PageHeader {
             page_type,
         }
     }
+
+    pub fn page_id(&self) -> u64 {
+        self.page_id
+    }
 }
 
 // This struct could hold metadata specific to certain page types.
 // For example, for a B-Tree index page, it might store the level of the node in the tree.
 // This would typically be part of the `data` field of the `Page`, not a separate field in `Page` struct.
 #[allow(dead_code)]
-struct PageMetadata {
-
-}
+struct PageMetadata {}
 
 // This enum was probably intended to be PageType.
 // I have renamed it and moved it to the top of the file.
@@ -284,10 +286,7 @@ mod tests {
             page.header().free_space,
             deserialized_page.header().free_space
         );
-        assert_eq!(
-            page.header().checksum,
-            deserialized_page.header().checksum
-        );
+        assert_eq!(page.header().checksum, deserialized_page.header().checksum);
         assert!(deserialized_page.verify_checksum());
     }
 
@@ -319,4 +318,3 @@ mod tests {
         assert_eq!(page.get_free_space(), new_free_space);
     }
 }
-
