@@ -181,20 +181,28 @@ impl DatabaseFile {
 
     /// Allocates a new page in the database file.
     ///
-    /// This extends the file size and increments the page count in the header.
+    /// This creates a new page with proper headers and checksum, writes it to disk,
+    /// and increments the page count in the header.
     /// Returns the new page ID.
     pub fn allocate_page(&mut self) -> Result<u64, DatabaseError> {
+        use crate::storage::page::PageType;
+        
         let new_page_id = self.header.page_count;
-        let new_page_count = new_page_id + 1;
-        let new_file_size = FileHeader::size() + new_page_count * PAGE_SIZE as u64;
-
-        // Extend the file size
-        self.file.set_len(new_file_size)?;
-
-        // Update header
-        self.header.page_count = new_page_count;
+        
+        // Create a new, properly initialized page with valid headers and checksum
+        let new_page = Page::new(new_page_id, PageType::Data);
+        
+        // Update header first to reflect the new page count
+        self.header.page_count += 1;
         self.write_header()?;
-
+        
+        // Calculate the offset for the new page
+        let offset = FileHeader::size() + new_page_id * PAGE_SIZE as u64;
+        
+        // Write the new page to the correct file offset
+        self.file.seek(SeekFrom::Start(offset))?;
+        self.file.write_all(&new_page.to_bytes())?;
+        
         Ok(new_page_id)
     }
 

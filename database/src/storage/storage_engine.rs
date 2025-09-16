@@ -10,7 +10,7 @@
 // TODO: Consider adding a tombstone Vacuum
 
 use crate::{
-    document::bson::serialize_document,
+    document::bson::{deserialize_document, serialize_document},
     storage::{buffer_pool::BufferPool, file::DatabaseFile, page_layout::PageLayout},
     Document,
 };
@@ -107,5 +107,15 @@ impl StorageEngine {
             page_id: new_page_id,
             slot_id: slot_id,
         })
+    }
+
+    pub fn get_document(&mut self, document_id: &DocumentId) -> Result<Document> {
+        let page = self
+            .buffer_pool
+            .pin_page(document_id.page_id, &mut self.database_file)?;
+        let document_bytes = PageLayout::get_document(page, document_id.slot_id)?;
+        self.buffer_pool.unpin_page(document_id.page_id(), false);
+
+        Ok(deserialize_document(&document_bytes)?)
     }
 }
