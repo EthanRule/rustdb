@@ -41,7 +41,7 @@ impl DocumentId {
 }
 
 pub struct StorageEngine {
-    database_file: DatabaseFile,
+    pub database_file: DatabaseFile,
     buffer_pool: BufferPool,
 }
 

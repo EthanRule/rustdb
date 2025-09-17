@@ -7,7 +7,7 @@ use tracing::info;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    println!("🗄️  Rust Database Engine Demo");
+    println!("🗄️  Rus  t Database Engine Demo");
     println!("==============================");
 
     info!("Starting database engine demonstration");
