@@ -115,7 +115,19 @@ impl StorageEngine {
             .pin_page(document_id.page_id, &mut self.database_file)?;
         let document_bytes = PageLayout::get_document(page, document_id.slot_id)?;
         self.buffer_pool.unpin_page(document_id.page_id(), false);
+        
+//         TODO: unpin page?
+        Ok(deserialize_document(&document_bytes)?)
+    }
 
+    pub fn update_document(&mut self, document_id: &DocumentId, document: &Document) -> Result<Document> {
+        let page = self
+            .buffer_pool
+            .pin_page(document_id.page_id, &mut self.database_file)?;
+        let document_bytes_old = PageLayout::get_document(page, document_id.slot_id)?;
+        let document_bytes_new = serialize_document(document);
+        self.buffer_pool.unpin_page(document_id.page_id(), false);
+        
         Ok(deserialize_document(&document_bytes)?)
     }
 }
