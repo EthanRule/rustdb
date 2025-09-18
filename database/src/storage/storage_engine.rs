@@ -17,7 +17,7 @@ use crate::{
 use anyhow::Result;
 use std::path::Path;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct DocumentId {
     page_id: u64,
     slot_id: u16,
@@ -115,19 +115,109 @@ impl StorageEngine {
             .pin_page(document_id.page_id, &mut self.database_file)?;
         let document_bytes = PageLayout::get_document(page, document_id.slot_id)?;
         self.buffer_pool.unpin_page(document_id.page_id(), false);
-        
-//         TODO: unpin page?
+
         Ok(deserialize_document(&document_bytes)?)
     }
 
-    pub fn update_document(&mut self, document_id: &DocumentId, document: &Document) -> Result<Document> {
+    pub fn update_document(
+        &mut self,
+        document_id: &DocumentId,
+        new_document: &Document,
+    ) -> Result<DocumentId> {
+        // 1. Serialize the new document
+        let new_document_bytes = serialize_document(new_document)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize document: {}", e))?;
+        let new_size = new_document_bytes.len();
+
+        // 2. Pin the original page
         let page = self
             .buffer_pool
             .pin_page(document_id.page_id, &mut self.database_file)?;
-        let document_bytes_old = PageLayout::get_document(page, document_id.slot_id)?;
-        let document_bytes_new = serialize_document(document);
-        self.buffer_pool.unpin_page(document_id.page_id(), false);
-        
-        Ok(deserialize_document(&document_bytes)?)
+
+        // 3. Get the old document size for comparison
+        let old_document_bytes = PageLayout::get_document(page, document_id.slot_id)?;
+        let old_size = old_document_bytes.len();
+
+        // 4. Check if new document fits in the same slot
+        if new_size <= old_size {
+            // Case 1: New document fits in same slot (in-place update)
+            PageLayout::update_document(page, document_id.slot_id, &new_document_bytes)?;
+            self.buffer_pool.unpin_page(document_id.page_id, true); // Mark as dirty
+            Ok(*document_id) // Return same DocumentId
+        } else {
+            // Case 2: New document doesn't fit, need to relocate
+
+            // First, check if the same page has enough free space
+            let available_space = page.get_free_space() as usize;
+            if new_size <= available_space + old_size {
+                // Can fit on same page after deleting old document
+                PageLayout::delete_document(page, document_id.slot_id)?;
+                let new_slot_id = PageLayout::insert_document(page, &new_document_bytes)?;
+                self.buffer_pool.unpin_page(document_id.page_id, true);
+
+                Ok(DocumentId::new(document_id.page_id, new_slot_id))
+            } else {
+                // Need to move to different page
+
+                // Mark old slot as deleted (tombstone)
+                PageLayout::delete_document(page, document_id.slot_id)?;
+                self.buffer_pool.unpin_page(document_id.page_id, true);
+
+                // Insert into new location (reuse insert_document logic)
+                self.insert_document_internal(&new_document_bytes)
+            }
+        }
+    }
+
+    pub fn delete_document(&mut self, document_id: &DocumentId) -> Result<()> {
+        // 1. Pin the page containing the document
+        let page = self
+            .buffer_pool
+            .pin_page(document_id.page_id, &mut self.database_file)?;
+
+        // 2. Mark the document slot as deleted (tombstone)
+        PageLayout::delete_document(page, document_id.slot_id)?;
+
+        // 3. Mark page as dirty and unpin
+        self.buffer_pool.unpin_page(document_id.page_id, true);
+
+        Ok(())
+    }
+
+    // Helper function to avoid code duplication
+    fn insert_document_internal(&mut self, document_bytes: &[u8]) -> Result<DocumentId> {
+        let document_size = document_bytes.len();
+
+        // Try to find an existing page with enough free space
+        let page_ids = self.buffer_pool.get_all_page_ids();
+        for page_id in page_ids {
+            if let Ok(page) = self.buffer_pool.pin_page(page_id, &mut self.database_file) {
+                let free_space = page.get_free_space() as usize;
+
+                if document_size <= free_space {
+                    match PageLayout::insert_document(page, document_bytes) {
+                        Ok(slot_id) => {
+                            self.buffer_pool.unpin_page(page_id, true);
+                            return Ok(DocumentId::new(page_id, slot_id));
+                        }
+                        Err(_) => {
+                            self.buffer_pool.unpin_page(page_id, false);
+                            continue;
+                        }
+                    }
+                }
+                self.buffer_pool.unpin_page(page_id, false);
+            }
+        }
+
+        // Need a new page
+        let new_page_id = self.database_file.allocate_page()?;
+        let page = self
+            .buffer_pool
+            .pin_page(new_page_id, &mut self.database_file)?;
+        let slot_id = PageLayout::insert_document(page, document_bytes)?;
+        self.buffer_pool.unpin_page(new_page_id, true);
+
+        Ok(DocumentId::new(new_page_id, slot_id))
     }
 }
