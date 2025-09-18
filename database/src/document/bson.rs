@@ -478,31 +478,13 @@ impl<R: Read> BsonDecoder<R> {
             }
         }
 
-        // Now parse the document data
-        let mut cursor = Cursor::new(document_data.as_slice());
-        let mut data_map = BTreeMap::new();
+        // Reconstruct the full document bytes with length prefix
+        let mut full_document = Vec::with_capacity(document_length);
+        full_document.extend_from_slice(&length_bytes);
+        full_document.extend_from_slice(&document_data);
         
-        loop {
-            let field_type = match cursor.read_u8() {
-                Ok(ft) => ft,
-                Err(_) => break, // End of data
-            };
-            
-            if field_type == 0x00 { break; } // Null terminator
-            
-            let field_name = read_cstring(&mut cursor)?;
-            if field_name.is_empty() {
-                return Err(BsonError::MalformedFieldName);
-            }
-            
-            let field_value = deserialize_value(&mut cursor, field_type)?;
-            data_map.insert(field_name, field_value);
-        }
-        
-        Ok(Document {
-            data: data_map,
-            id: Value::ObjectId(ObjectId::new()),
-        })
+        // Use the proper deserialize_document function that handles _id correctly
+        deserialize_document(&full_document)
     }
 
     /// Stream decode multiple documents from a stream
@@ -797,7 +779,10 @@ pub fn serialize_document(doc: &Document) -> Result<Vec<u8>, BsonError> {
     // Reserve space for length (4 bytes)
     buffer.write_u32::<LittleEndian>(0)?;
     
-    // Serialize fields
+    // First serialize the _id field
+    serialize_field(&mut buffer, "_id", &doc.id)?;
+    
+    // Then serialize all other fields
     for (key, value) in &doc.data {
         serialize_field(&mut buffer, key, value)?;
     }
@@ -850,6 +835,7 @@ pub fn deserialize_document(data: &[u8]) -> Result<Document, BsonError> {
         }
         
         let mut data_map = BTreeMap::new();
+        let mut document_id = Value::ObjectId(ObjectId::new()); // Default ID if not found
         
         loop {
             let field_type = cursor.read_u8()?;
@@ -861,12 +847,18 @@ pub fn deserialize_document(data: &[u8]) -> Result<Document, BsonError> {
             }
             
             let field_value = deserialize_value(&mut cursor, field_type)?;
-            data_map.insert(field_name, field_value);
+            
+            // Special handling for _id field
+            if field_name == "_id" {
+                document_id = field_value;
+            } else {
+                data_map.insert(field_name, field_value);
+            }
         }
         
         Ok(Document {
             data: data_map,
-            id: Value::ObjectId(ObjectId::new()),
+            id: document_id,
         })
     })
 }
@@ -1357,9 +1349,12 @@ mod tests {
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
         
-        // Empty document should have only length prefix (4 bytes) + null terminator (1 byte)
-        assert_eq!(serialized.len(), 5);
+        // Empty document now includes _id field: length prefix (4 bytes) + _id field (1 + 3 + 12 = 16) + null terminator (1 byte) = 22 bytes
+        assert_eq!(serialized.len(), 22);
+        // Data is still empty (doesn't include the _id field in the data map)
         assert_eq!(deserialized.data.len(), 0);
+        // But it should have an _id (which is always present)
+        assert!(matches!(deserialized.id, Value::ObjectId(_)));
     }
 
     /// Test document with many fields (stress test for field handling)
@@ -2075,6 +2070,7 @@ mod tests {
         
         let decoded = decoder.decode_document().unwrap();
         
+        // Data should have 1000 fields (not counting the _id which is separate)
         assert_eq!(decoded.data.len(), 1000);
         assert_eq!(decoded.get("field_0"), Some(&Value::String("string_0".to_string())));
         assert_eq!(decoded.get("field_1"), Some(&Value::I32(1)));
@@ -2234,7 +2230,9 @@ mod tests {
         
         let field_names = decoder.get_field_names().unwrap();
         
-        assert_eq!(field_names.len(), 3);
+        // Now includes the _id field plus the 3 data fields
+        assert_eq!(field_names.len(), 4);
+        assert!(field_names.contains(&"_id".to_string()));
         assert!(field_names.contains(&"name".to_string()));
         assert!(field_names.contains(&"age".to_string()));
         assert!(field_names.contains(&"email".to_string()));
@@ -2551,11 +2549,13 @@ mod tests {
         
         let serialized = serialize_document(&doc).unwrap();
         
-        // Test getting field names without decoding values
+        // Test getting field names without decoding values  
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
         let field_names = decoder.get_field_names().unwrap();
         
-        assert_eq!(field_names.len(), 1000);
+        // Now includes _id field plus the 1000 data fields
+        assert_eq!(field_names.len(), 1001);
+        assert!(field_names.contains(&"_id".to_string()));
         assert!(field_names.contains(&"field_0".to_string()));
         assert!(field_names.contains(&"field_999".to_string()));
         

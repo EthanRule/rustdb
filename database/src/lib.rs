@@ -11,6 +11,7 @@ pub mod query;
 pub mod result;
 pub mod server;
 pub mod storage;
+pub mod ui;
 pub use crate::document::types::Value;
 pub use crate::document::Document;
 pub use crate::document::bson;

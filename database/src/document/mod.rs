@@ -95,6 +95,11 @@ impl Document {
         }
     }
 
+    /// Get the raw ID value (useful for testing and comparisons)
+    pub fn id(&self) -> &Value {
+        &self.id
+    }
+
     pub fn ensure_id(&mut self) -> &ObjectId {
         // Check if id is already an ObjectId
         if let Value::ObjectId(ref oid) = self.id {
@@ -110,6 +115,31 @@ impl Document {
         } else {
             unreachable!("Document id should always be ObjectId after ensure_id");
         }
+    }
+
+    /// Get an iterator over all field names in the document
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.data.keys()
+    }
+
+    /// Get an iterator over all field values in the document
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.data.values()
+    }
+
+    /// Get an iterator over all field name-value pairs in the document
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.data.iter()
+    }
+
+    /// Check if the document is empty (no fields)
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Get the number of fields in the document
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
 }
 
