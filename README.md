@@ -2,13 +2,9 @@
 
 A high-performance, document-oriented database engine written in Rust, featuring BSON document storage with page-based persistence and buffer pool management.
 
-## 🎯 Current Status: 80% Complete & Production-Ready Foundation
+### Features
 
-Your database engine has a **solid, working foundation** with 247 passing tests. Only page allocation remains to complete V1!
-
-### ✅ **Completed & Working Features**
-
-#### 🗄️ **Complete BSON Serialization System**
+#### 🗃️ **BSON Document Storage**
 
 - **All BSON data types supported**: Strings, Numbers (I32, I64, F64), Booleans, Arrays, Objects, ObjectIds, Null, Binary, DateTime
 - **Memory-efficient streaming**: Zero-copy deserialization where possible
@@ -45,45 +41,7 @@ Your database engine has a **solid, working foundation** with 247 passing tests.
 - **Path-based field access** for nested data
 - **Document validation** with comprehensive error handling
 
-### 🔄 **Next Steps for V1 Completion**
-
-#### 🎯 **Critical: Page Allocation** (Only missing piece!)
-
-Currently: `❌ No existing page has sufficient space and new page allocation is not yet implemented`
-
-**What needs to be added:**
-
-```rust
-// In storage_engine.rs insert_document method
-if no_existing_page_has_space {
-    // 1. Allocate new page from database file
-    // 2. Initialize page with header
-    // 3. Add to buffer pool
-    // 4. Insert document into new page
-}
-```
-
-#### 📖 **Document Retrieval**
-
-```rust
-pub fn get_document(&self, document_id: DocumentId) -> Result<Document>
-```
-
-#### ✏️ **Document Updates**
-
-```rust
-pub fn update_document(&mut self, document_id: DocumentId, document: &Document) -> Result<()>
-```
-
-#### 🗑️ **Document Deletion**
-
-```rust
-pub fn delete_document(&mut self, document_id: DocumentId) -> Result<()>
-```
-
-## 🧬 **BSON Data Serialization & Storage**
-
-### **Document Structure**
+### 🔄 **BSON Format Overview**
 
 Every document is stored as BSON (Binary JSON) with the following layout:
 
@@ -189,83 +147,6 @@ Each 8KB page contains:
 - **Compaction**: Automatic reclamation of deleted document space
 - **Alignment**: Proper memory alignment for performance and safety
 
-## 🚀 **Getting Started**
-
-### **Installation**
-
-```bash
-git clone https://github.com/EthanRule/rust_database_engine.git
-cd rust_database_engine/database
-cargo build --release
-```
-
-### **Running the Demo**
-
-```bash
-cargo run
-```
-
-### **Running Tests (247 tests - All passing!)**
-
-```bash
-cargo test              # Run all tests
-cargo test --lib        # Library tests only
-cargo test page         # Page-specific tests
-cargo test bson         # BSON serialization tests
-```
-
-### **Example Usage**
-
-```rust
-use database::{Document, Value, storage::storage_engine::StorageEngine};
-use database::document::object_id::ObjectId;
-use std::path::Path;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create/open database
-    let mut storage_engine = StorageEngine::new(Path::new("my_db.db"), 64)?;
-
-    // Create a document
-    let mut doc = Document::new();
-    doc.set("name", Value::String("Alice Johnson".to_string()));
-    doc.set("age", Value::I32(28));
-    doc.set("active", Value::Bool(true));
-    doc.set("user_id", Value::ObjectId(ObjectId::new()));
-
-    // Nested object
-    let mut address = std::collections::BTreeMap::new();
-    address.insert("city".to_string(), Value::String("San Francisco".to_string()));
-    address.insert("zip".to_string(), Value::String("94102".to_string()));
-    doc.set("address", Value::Object(address));
-
-    // Insert document (will work once page allocation is implemented)
-    match storage_engine.insert_document(&doc) {
-        Ok(doc_id) => {
-            println!("Document inserted at page {} slot {}",
-                     doc_id.page_id(), doc_id.slot_id());
-        }
-        Err(e) => println!("Insert error: {}", e),
-    }
-
-    Ok(())
-}
-```
-
-### **BSON Direct Usage**
-
-```rust
-use database::document::bson::{serialize_document, deserialize_document};
-
-// Serialize
-let bson_data = serialize_document(&doc)?;
-println!("Document serialized to {} bytes", bson_data.len());
-
-// Deserialize
-let restored_doc = deserialize_document(&bson_data)?;
-```
-
-## 🏗️ **Architecture Overview**
-
 ### **Layer Architecture**
 
 ```
@@ -277,11 +158,11 @@ BSON Serialization (Binary format)
     ↓
 Storage Engine (CRUD operations)
     ↓
-Buffer Pool (Memory management)
+Buffer Pool (Memory management & LRU caching)
     ↓
 Page Layout (Slot directories)
     ↓
-Database File (Persistence)
+Database File (Persistence & Disk I/O)
 ```
 
 ### **Key Components**
@@ -315,93 +196,9 @@ Database File (Persistence)
 - **Property tests**: Fuzzing and edge case validation
 - **Performance tests**: Benchmarks and stress testing
 
-### **Test Categories**
-
-- ✅ BSON serialization/deserialization (78 tests)
-- ✅ Document manipulation (25 tests)
-- ✅ Page management (25 tests)
-- ✅ Buffer pool operations (18 tests)
-- ✅ Storage engine integration (4 tests)
-- ✅ File operations (5 tests)
-- ✅ Error handling scenarios (15 tests)
-- ✅ Property-based testing (77 tests)
-
 ### **Quality Assurance**
 
 - **Memory safety**: No unsafe code in hot paths
 - **Error handling**: Comprehensive error types with context
 - **Resource management**: Proper cleanup with RAII
 - **Thread safety**: Designed for single-thread, extensible to multi-thread
-
-## 🎯 **Project Goals**
-
-### **V1 Target (95% Complete)**
-
-- ✅ Document storage with BSON serialization
-- ✅ Page-based persistence with buffer pool
-- ✅ Database file management
-- 🔄 **Page allocation** (final missing piece)
-- 🔄 Full CRUD operations (get, update, delete)
-
-### **V2 Future Goals**
-
-- Indexing system (B+ trees)
-- Query language and optimization
-- Transactions and ACID compliance
-- Multi-threaded access
-- Replication and clustering
-
-## 🤝 **Contributing**
-
-This is a learning project demonstrating database internals. The code is well-structured and documented for educational purposes.
-
-### **Areas for Contribution**
-
-1. **Complete page allocation** in `storage_engine.rs`
-2. **Implement remaining CRUD operations**
-3. **Add indexing system**
-4. **Performance optimizations**
-5. **Documentation and examples**
-
-## 📈 **Performance & Benchmarks**
-
-Run benchmarks:
-
-```bash
-cargo bench
-```
-
-Key performance features:
-
-- **Zero-copy deserialization** where possible
-- **Streaming operations** for large documents
-- **Memory pooling** for reduced allocations
-- **Page-level caching** with LRU eviction
-- **Optimized slot directories** for fast lookups
-
-## ⚡ **Current Limitations**
-
-1. **Page allocation not implemented** - Cannot store documents yet
-2. **Single-threaded** - No concurrent access support
-3. **No indexing** - Sequential scans only
-4. **No query language** - Direct document access only
-5. **No transactions** - Individual operations only
-
-## 🎉 **Success Metrics**
-
-- ✅ **247 tests passing** - Comprehensive validation
-- ✅ **Memory-safe implementation** - No crashes or leaks
-- ✅ **Complete BSON support** - All MongoDB-compatible types
-- ✅ **Production-quality architecture** - Layered, extensible design
-- ✅ **Excellent documentation** - Well-documented APIs and internals
-
-**Your database engine is 80% complete with a solid foundation for finishing V1!** 🚀
-**Your database engine is 80% complete with a solid foundation for finishing V1!** 🚀
-
-## 📜 **License**
-
-This project is open source and available under the MIT License.
-
-## 📞 **Contact**
-
-For questions about this database engine implementation, please open an issue in the repository.
