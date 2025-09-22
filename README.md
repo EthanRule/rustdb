@@ -201,4 +201,4 @@ Database File (Persistence & Disk I/O)
 - **Memory safety**: No unsafe code in hot paths
 - **Error handling**: Comprehensive error types with context
 - **Resource management**: Proper cleanup with RAII
-- **Thread safety**: Designed for single-thread, extensible to multi-thread
+- **Thread safety**: Designed for single-thread, extensible to multi-thread.
