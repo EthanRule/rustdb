@@ -34,3 +34,20 @@ criterion = "0.5"
 [[bench]]
 name = "bson_benchmarks"
 harness = false
+
+# Test organization
+[[test]]
+name = "integration_tests"
+path = "tests/integration/mod.rs"
+
+[[test]]
+name = "unit_tests" 
+path = "tests/unit/mod.rs"
+
+[[test]]
+name = "property_tests"
+path = "tests/property/mod.rs"
+
+[[test]]
+name = "debug_tests"
+path = "tests/debug/mod.rs"
