@@ -1,5 +1,5 @@
 use database::{
-    storage::storage_engine::{DocumentId, StorageEngine},
+    storage::storage_engine::{DocumentId},
     Document, Value,
 };
 use tempfile::tempdir;
@@ -24,9 +24,6 @@ fn test_insert_document_with_existing_page() {
     let _db_file = database::storage::file::DatabaseFile::create(&db_path)
         .expect("Failed to create database file");
     drop(_db_file);
-
-    let mut storage_engine =
-        StorageEngine::new(&db_path, 10).expect("Failed to create storage engine");
 
     // Create a simple document
     let mut doc = Document::new();
