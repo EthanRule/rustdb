@@ -15,11 +15,16 @@ Integration tests that test multiple components working together, often involvin
 - `week1_integration.rs` - Document-level integration tests from week 1 development
 - `week2_integration.rs` - Full document lifecycle integration tests from week 2 development
 
-### `/unit/`
-Unit tests that test individual functions or components in isolation:
+### Unit Tests
+Unit tests are located **directly in the source files** using `#[cfg(test)]` modules. This is the recommended Rust practice for testing individual functions and components in isolation:
 
-- `bson_roundtrip_tests.rs` - Tests BSON serialization and deserialization functionality
-- `simple_page_test.rs` - Tests basic page operations in isolation
+- `src/error.rs` - Tests error handling and conversions
+- `src/document/mod.rs` - Tests Document API methods
+- `src/document/bson.rs` - Comprehensive BSON serialization/deserialization tests
+- `src/document/object_id.rs` - Tests ObjectId functionality
+- `src/storage/page_layout.rs` - Tests page layout operations
+- `src/storage/buffer_pool.rs` - Tests buffer pool functionality
+- And more throughout the codebase...
 
 ### `/property/`
 Property-based and fuzz tests that test system properties and edge cases:
@@ -36,6 +41,7 @@ Debug and development tests used for troubleshooting specific issues:
 - `compaction_bug_test.rs` - Test for reproducing specific compaction bugs
 - `debug_compaction.rs` - Debug tests for compaction issues
 - `debug_file_locks.rs` - Debug tests for file locking issues
+- `simple_page_test.rs` - Simple page debugging test
 
 ## Running Tests
 
@@ -46,42 +52,52 @@ cargo test
 
 ### Run tests by category:
 ```bash
-# Integration tests
+# All tests (includes unit tests in source files)
+cargo test
+
+# Integration tests only
 cargo test --test integration_tests
 
-# Unit tests  
-cargo test --test unit_tests
-
-# Property tests
+# Property tests only
 cargo test --test property_tests
 
-# Debug tests (if needed)
+# Debug tests only (if needed)
 cargo test --test debug_tests
+
+# Unit tests only (in source files)
+cargo test --lib
 ```
 
 ### Run specific test files:
 ```bash
-# Example: Run BSON roundtrip tests
-cargo test --test unit::bson_roundtrip_tests
+# Example: Run BSON tests (in source file)
+cargo test --lib bson::tests
 
 # Example: Run CRUD operations tests
-cargo test --test integration::crud_operations_test
+cargo test --test integration_tests crud_operations_test
+
+# Example: Run Document tests (in source file)  
+cargo test --lib document::tests
 ```
 
 ## Test Guidelines
 
-- **Unit tests**: Should test single functions/components in isolation, avoid file I/O
-- **Integration tests**: Test multiple components together, can use file system and external dependencies
+- **Unit tests** (in source files): Test single functions/components in isolation, avoid file I/O, have access to private functions
+- **Integration tests** (in `tests/` directory): Test multiple components together, can use file system and external dependencies, test public API only
 - **Property tests**: Test system invariants and edge cases using property-based testing
 - **Debug tests**: Temporary tests for debugging specific issues, should be removed when issues are resolved
 
 ## Adding New Tests
 
-When adding new tests, place them in the appropriate category:
+When adding new tests, place them in the appropriate location:
 
-1. **Unit tests** - for testing individual functions or small components
-2. **Integration tests** - for testing multiple components working together
-3. **Property tests** - for property-based testing and fuzz testing
-4. **Debug tests** - only for temporary debugging (should be cleaned up regularly)
+1. **Unit tests** - Add `#[cfg(test)]` modules directly in source files (`src/`) for testing individual functions or small components
+2. **Integration tests** - Add to `tests/integration/` for testing multiple components working together  
+3. **Property tests** - Add to `tests/property/` for property-based testing and fuzz testing
+4. **Debug tests** - Add to `tests/debug/` only for temporary debugging (should be cleaned up regularly)
 
-Make sure to follow the existing naming conventions and include descriptive test names.
+### Best Practices:
+- **Always prefer unit tests in source files** for testing individual components
+- **Use integration tests** when you need to test the public API or multiple components together
+- **Unit tests have access to private functions**, integration tests only test public APIs
+- **Follow existing naming conventions** and include descriptive test names

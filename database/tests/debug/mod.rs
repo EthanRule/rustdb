@@ -4,3 +4,4 @@
 mod compaction_bug_test;
 mod debug_compaction;
 mod debug_file_locks;
+mod simple_page_test;
