@@ -1,5 +1,4 @@
-#[allow(unused_imports)] //TODO: Remove unused imports
-use tracing::{debug, error, info, warn};
+use tracing::{info};
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 

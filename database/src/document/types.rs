@@ -205,7 +205,13 @@ impl Value {
             Value::Null => None,
             Value::I32(x) => Some(*x as i64),
             Value::I64(x) => Some(*x),
-            Value::F64(x) => Some(*x as i64), // TODO: add Truncation to docs.
+            Value::F64(x) =>  {
+                if x.is_finite() && *x >= i64::MIN as f64 && *x <= i64::MAX as f64 {
+                    Some(x.floor() as i64)
+                } else {
+                    None
+                }
+            },
             Value::String(x) => x.parse::<i64>().ok(),
             Value::Bool(x) => match x {
                 true => Some(1i64),
@@ -220,7 +226,7 @@ impl Value {
         match self {
             Value::Null => None,
             Value::I32(x) => Some(*x as f64),
-            Value::I64(x) => Some(*x as f64), // TODO: add Truncation to docs.
+            Value::I64(x) => Some(*x as f64),
             Value::F64(x) => Some(*x),
             Value::String(x) => x.parse::<f64>().ok(),
             Value::Bool(x) => match x {
@@ -654,7 +660,13 @@ mod tests {
                 Value::Null => assert_eq!(result, None),
                 Value::I32(i) => assert_eq!(result, Some(i as i64)),
                 Value::I64(i) => assert_eq!(result, Some(i)),
-                Value::F64(f) => assert_eq!(result, Some(f as i64)),
+                Value::F64(f) => {
+                    if f.is_finite() && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+                        assert_eq!(result, Some(f.floor() as i64));
+                    } else {
+                        assert_eq!(result, None);
+                    }
+                },
                 Value::String(s) => {
                     if s.chars().all(|c| c.is_ascii_digit()) {
                         assert_eq!(result, s.parse::<i64>().ok());
