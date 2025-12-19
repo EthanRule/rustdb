@@ -1,47 +1,45 @@
 # Rust Database Engine
-
-A high-performance, document-oriented database engine written in Rust, featuring BSON document storage with page-based persistence and buffer pool management.
+Document-oriented database engine, featuring BSON document storage with page-based persistence, LRU Cache, and buffer pool management
 
 ### Features
 
-#### 🗃️ **BSON Document Storage**
+#### **BSON Document Storage**
 
-- **All BSON data types supported**: Strings, Numbers (I32, I64, F64), Booleans, Arrays, Objects, ObjectIds, Null, Binary, DateTime
-- **Memory-efficient streaming**: Zero-copy deserialization where possible
-- **Validation & Safety**: Document size limits (16MB), nesting depth limits, UTF-8 validation
-- **Performance optimized**: Partial document reading, progress callbacks, buffer reuse
+o **BSON Datatypes**: Strings, Numbers (I32, I64, F64), Booleans, Arrays, Objects, ObjectIds, Null, Binary, DateTime.  
+o **Validation & Safety**: Document size limits (16MB), nesting depth limits, UTF-8 validation.  
+o **Performance optimized**: Partial document reading, progress callbacks, buffer reuse.  
 
-#### 📦 **Page-Based Storage Engine**
+#### **Paging Storage**
 
-- **8KB pages** with slot directory management
-- **Page headers** with checksums for data integrity
-- **Slot reuse** and page compaction for space efficiency
-- **Memory alignment** fixes for safe pointer operations
-- **Page types**: Data, Index, and Metadata pages
+o **8KB pages** with slot directory management.  
+o **Page headers** with checksums for data integrity.  
+o **Slot reuse** and page compaction for space efficiency.  
+o **Memory alignment** fixes for safe pointer operations.  
+o **Page types**: Data, Index, and Metadata pages.  
 
-#### 💾 **Buffer Pool Management**
+#### **Buffer Pool Management**
 
-- **LRU eviction** policy for memory-efficient caching
-- **Page pinning/unpinning** for safe concurrent access
-- **Dirty page tracking** for write-through persistence
-- **Configurable pool size** for performance tuning
+o **LRU eviction** policy for memory-efficient caching.  
+o **Page pinning/unpinning** for safe concurrent access.  
+o **Dirty page tracking** for write-through persistence.  
+o **Configurable pool size** for performance tuning.  
 
-#### 🔧 **Database File Management**
+#### **Database File Management**
 
-- **Database file creation** with versioning and metadata
-- **Exclusive file locking** to prevent corruption
-- **Header validation** and compatibility checking
-- **Atomic operations** with proper sync/flush
+o **Database file creation** with versioning and metadata.  
+o **Exclusive file locking** to prevent corruption.  
+o **Header validation** and compatibility checking.  
+o **Atomic operations** with proper sync/flush.  
 
-#### 📊 **Document API**
+#### **Document API**
 
-- **Full document manipulation**: Create, set, get, remove fields
-- **Nested objects and arrays** with BTreeMap backing
-- **Type-safe value system** with proper conversions
-- **Path-based field access** for nested data
-- **Document validation** with comprehensive error handling
+o **Full document manipulation**: Create, set, get, and remove fields.  
+o **Nested objects and arrays** with BTreeMap backing.  
+o **Type-safe value system** with proper conversions.  
+o **Path-based field access** for nested data.  
+o **Document validation** with comprehensive error handling.  
 
-### 🔄 **BSON Format Overview**
+### **BSON Format Overview**
 
 Every document is stored as BSON (Binary JSON) with the following layout:
 
@@ -49,7 +47,7 @@ Every document is stored as BSON (Binary JSON) with the following layout:
 [Document Length (4 bytes)][Document Fields...][Null Terminator (1 byte)]
 ```
 
-### **Field Structure**
+### **[Document Fields...] Structure**
 
 Each field follows this pattern:
 
@@ -103,7 +101,7 @@ Each field follows this pattern:
 
 ### **Page Storage Layout**
 
-Each 8KB page contains:
+Each 8KB page contains:  
 
 ```
 [Page Header (16 bytes)][Slot Directory][Document Data]
@@ -111,11 +109,11 @@ Each 8KB page contains:
 
 **Page Header:**
 
-- Page ID (8 bytes)
-- Checksum (4 bytes)
-- Free space counter (2 bytes)
-- Page type (1 byte)
-- Reserved (1 byte)
+o Page ID (8 bytes)  
+o Checksum (4 bytes)  
+o Free space counter (2 bytes)  
+o Page type (1 byte)  
+o Reserved (1 byte)  
 
 **Slot Directory:**
 
@@ -123,7 +121,7 @@ Each 8KB page contains:
 - Enables efficient document location
 - Supports tombstones for deleted documents
 
-## 📊 **Performance Characteristics**
+## **Performance Characteristics**
 
 ### **BSON Serialization Benchmarks**
 
@@ -136,16 +134,16 @@ Each 8KB page contains:
 
 ### **Memory Usage**
 
-- **Document size limit**: 16MB per document
-- **Page size**: 8KB (configurable)
-- **Buffer pool**: Configurable (default: 64 pages = 512KB)
-- **Memory efficiency**: Streaming operations minimize allocations
+o **Document size limit**: 16MB per document  
+o **Page size**: 8KB (configurable)  
+o **Buffer pool**: Configurable (default: 64 pages = 512KB)  
+o **Memory efficiency**: Streaming operations minimize allocations  
 
 ### **Storage Efficiency**
 
-- **Page utilization**: Slot directory enables high space efficiency
-- **Compaction**: Automatic reclamation of deleted document space
-- **Alignment**: Proper memory alignment for performance and safety
+o **Page utilization**: Slot directory enables high space efficiency  
+o **Compaction**: Automatic reclamation of deleted document space  
+o **Alignment**: Proper memory alignment for performance and safety  
 
 ### **Layer Architecture**
 
@@ -187,7 +185,7 @@ Database File (Persistence & Disk I/O)
    - `PageLayout`: Slot directory management
    - `DatabaseFile`: File I/O and locking
 
-## 🧪 **Testing & Quality**
+## **Testing & Quality**
 
 ### **Test Coverage: 247 Tests Passing**
 
@@ -195,10 +193,3 @@ Database File (Persistence & Disk I/O)
 - **Integration tests**: 67 tests for end-to-end workflows
 - **Property tests**: Fuzzing and edge case validation
 - **Performance tests**: Benchmarks and stress testing
-
-### **Quality Assurance**
-
-- **Memory safety**: No unsafe code in hot paths
-- **Error handling**: Comprehensive error types with context
-- **Resource management**: Proper cleanup with RAII
-- **Thread safety**: Designed for single-thread, extensible to multi-thread.
