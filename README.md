@@ -1,5 +1,5 @@
 # Rust Database Engine
-Document-oriented database engine, featuring BSON document storage with page-based persistence, LRU Cache, and buffer pool management
+Document-oriented database engine, featuring BSON document storage with page-based persistence, LRU Cache, and buffer pool management.
 
 ## Features
 
