@@ -1,4 +1,5 @@
 # Rust Database Engine
+<<<<<<< HEAD
 A high-performance, document-oriented database engine written in Rust, featuring BSON document storage with page-based persistence and buffer pool management.
 
 ### Dependancies
@@ -11,44 +12,41 @@ cargo run --bin database_gui
 
 ### Features
 
-#### 🗃️ **BSON Document Storage**
+- **BSON Datatypes**: Strings, Numbers (I32, I64, F64), Booleans, Arrays, Objects, ObjectIds, Null, Binary, DateTime.  
+- **Validation & Safety**: Document size limits (16MB), nesting depth limits, UTF-8 validation.  
+- **Performance optimized**: Partial document reading, progress callbacks, buffer reuse.  
 
-- **All BSON data types supported**: Strings, Numbers (I32, I64, F64), Booleans, Arrays, Objects, ObjectIds, Null, Binary, DateTime
-- **Memory-efficient streaming**: Zero-copy deserialization where possible
-- **Validation & Safety**: Document size limits (16MB), nesting depth limits, UTF-8 validation
-- **Performance optimized**: Partial document reading, progress callbacks, buffer reuse
+#### **Paging Storage**
 
-#### 📦 **Page-Based Storage Engine**
+- **8KB pages** with slot directory management.  
+- **Page headers** with checksums for data integrity.  
+- **Slot reuse** and page compaction for space efficiency.  
+- **Memory alignment** fixes for safe pointer operations.  
+- **Page types**: Data, Index, and Metadata pages.  
 
-- **8KB pages** with slot directory management
-- **Page headers** with checksums for data integrity
-- **Slot reuse** and page compaction for space efficiency
-- **Memory alignment** fixes for safe pointer operations
-- **Page types**: Data, Index, and Metadata pages
+#### **Buffer Pool Management**
 
-#### 💾 **Buffer Pool Management**
+- **LRU eviction** policy for memory-efficient caching.  
+- **Page pinning/unpinning** for safe concurrent access.  
+- **Dirty page tracking** for write-through persistence.  
+- **Configurable pool size** for performance tuning.  
 
-- **LRU eviction** policy for memory-efficient caching
-- **Page pinning/unpinning** for safe concurrent access
-- **Dirty page tracking** for write-through persistence
-- **Configurable pool size** for performance tuning
+#### **Database File Management**
 
-#### 🔧 **Database File Management**
+- **Database file creation** with versioning and metadata.  
+- **Exclusive file locking** to prevent corruption.  
+- **Header validation** and compatibility checking.  
+- **Atomic operations** with proper sync/flush.  
 
-- **Database file creation** with versioning and metadata
-- **Exclusive file locking** to prevent corruption
-- **Header validation** and compatibility checking
-- **Atomic operations** with proper sync/flush
+#### **Document API**
 
-#### 📊 **Document API**
+- **Full document manipulation**: Create, set, get, and remove fields.  
+- **Nested objects and arrays** with BTreeMap backing.  
+- **Type-safe value system** with proper conversions.  
+- **Path-based field access** for nested data.  
+- **Document validation** with comprehensive error handling.  
 
-- **Full document manipulation**: Create, set, get, remove fields
-- **Nested objects and arrays** with BTreeMap backing
-- **Type-safe value system** with proper conversions
-- **Path-based field access** for nested data
-- **Document validation** with comprehensive error handling
-
-### 🔄 **BSON Format Overview**
+## **BSON Format Overview**
 
 Every document is stored as BSON (Binary JSON) with the following layout:
 
@@ -56,7 +54,7 @@ Every document is stored as BSON (Binary JSON) with the following layout:
 [Document Length (4 bytes)][Document Fields...][Null Terminator (1 byte)]
 ```
 
-### **Field Structure**
+#### **[Document Fields...] Structure**
 
 Each field follows this pattern:
 
@@ -64,7 +62,7 @@ Each field follows this pattern:
 [Type (1 byte)][Field Name (null-terminated string)][Value (variable length)]
 ```
 
-### **Supported Data Types**
+#### **Supported Data Types**
 
 | Type     | BSON Code | Rust Type                 | Storage Size         |
 | -------- | --------- | ------------------------- | -------------------- |
@@ -80,7 +78,7 @@ Each field follows this pattern:
 | Int32    | 0x10      | `i32`                     | 4 bytes              |
 | Int64    | 0x12      | `i64`                     | 8 bytes              |
 
-### **Example Document Storage**
+#### **Example Document Storage**
 
 **JSON Document:**
 
@@ -108,9 +106,9 @@ Each field follows this pattern:
 [00]                    // Document terminator
 ```
 
-### **Page Storage Layout**
+#### **Page Storage Layout**
 
-Each 8KB page contains:
+Each 8KB page contains:  
 
 ```
 [Page Header (16 bytes)][Slot Directory][Document Data]
@@ -118,21 +116,21 @@ Each 8KB page contains:
 
 **Page Header:**
 
-- Page ID (8 bytes)
-- Checksum (4 bytes)
-- Free space counter (2 bytes)
-- Page type (1 byte)
-- Reserved (1 byte)
+- Page ID (8 bytes)  
+- Checksum (4 bytes)  
+- Free space counter (2 bytes)  
+- Page type (1 byte)  
+- Reserved (1 byte)  
 
 **Slot Directory:**
 
-- Array of (offset, length) pairs
-- Enables efficient document location
-- Supports tombstones for deleted documents
+- Array of (offset, length) pairs  
+- Enables efficient document location  
+- Supports tombstones for deleted documents  
 
-## 📊 **Performance Characteristics**
+## **Performance Characteristics**
 
-### **BSON Serialization Benchmarks**
+#### **BSON Serialization Benchmarks**
 
 | Document Size           | Serialization | Deserialization |
 | ----------------------- | ------------- | --------------- |
@@ -141,20 +139,20 @@ Each 8KB page contains:
 | Large (1000 fields)     | ~370 µs       | ~1.7 ms         |
 | Very Large (10K fields) | ~6 ms         | ~21 ms          |
 
-### **Memory Usage**
+#### **Memory Usage**
 
-- **Document size limit**: 16MB per document
-- **Page size**: 8KB (configurable)
-- **Buffer pool**: Configurable (default: 64 pages = 512KB)
-- **Memory efficiency**: Streaming operations minimize allocations
+- **Document size limit**: 16MB per document  
+- **Page size**: 8KB (configurable)  
+- **Buffer pool**: Configurable (default: 64 pages = 512KB)  
+- **Memory efficiency**: Streaming operations minimize allocations  
 
-### **Storage Efficiency**
+#### **Storage Efficiency**
 
-- **Page utilization**: Slot directory enables high space efficiency
-- **Compaction**: Automatic reclamation of deleted document space
-- **Alignment**: Proper memory alignment for performance and safety
+- **Page utilization**: Slot directory enables high space efficiency  
+- **Compaction**: Automatic reclamation of deleted document space  
+- **Alignment**: Proper memory alignment for performance and safety  
 
-### **Layer Architecture**
+## **Layer Architecture**
 
 ```
 Application Layer
@@ -172,40 +170,33 @@ Page Layout (Slot directories)
 Database File (Persistence & Disk I/O)
 ```
 
-### **Key Components**
+#### **Key Components**
 
 1. **Document System** (`src/document/`)
 
-   - `Document`: Main document structure with BTreeMap backing
-   - `Value`: Enum for all supported data types
-   - `ObjectId`: Unique 12-byte identifiers
-   - `Validator`: Document validation and constraints
+   - `Document`: Main document structure with BTreeMap backing  
+   - `Value`: Enum for all supported data types  
+   - `ObjectId`: Unique 12-byte identifiers  
+   - `Validator`: Document validation and constraints  
 
 2. **BSON Engine** (`src/document/bson.rs`)
 
-   - Streaming serialization/deserialization
-   - All BSON types supported
-   - Memory-efficient with progress tracking
+   - Streaming serialization/deserialization  
+   - All BSON types supported  
+   - Memory-efficient with progress tracking  
 
 3. **Storage Engine** (`src/storage/`)
-   - `StorageEngine`: High-level CRUD interface
-   - `BufferPool`: LRU cache with page management
-   - `Page`: 8KB page structure with headers
-   - `PageLayout`: Slot directory management
-   - `DatabaseFile`: File I/O and locking
+   - `StorageEngine`: High-level CRUD interface  
+   - `BufferPool`: LRU cache with page management  
+   - `Page`: 8KB page structure with headers  
+   - `PageLayout`: Slot directory management  
+   - `DatabaseFile`: File I/O and locking  
 
-## 🧪 **Testing & Quality**
+## **Testing & Quality**
 
-### **Test Coverage: 247 Tests Passing**
+#### **Test Coverage: 247 Tests Passing**
 
-- **Unit tests**: 180 tests covering all components
-- **Integration tests**: 67 tests for end-to-end workflows
+- **Unit tests**: 180 tests covering all components  
+- **Integration tests**: 67 tests for end-to-end workflows  
 - **Property tests**: Fuzzing and edge case validation
 - **Performance tests**: Benchmarks and stress testing
-
-### **Quality Assurance**
-
-- **Memory safety**: No unsafe code in hot paths
-- **Error handling**: Comprehensive error types with context
-- **Resource management**: Proper cleanup with RAII
-- **Thread safety**: Designed for single-thread, extensible to multi-thread.
