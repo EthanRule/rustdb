@@ -1,5 +1,4 @@
 # Rust Database Engine
-<<<<<<< HEAD
 A high-performance, document-oriented database engine written in Rust, featuring BSON document storage with page-based persistence and buffer pool management.
 
 ### Dependancies
