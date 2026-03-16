@@ -1,6 +1,13 @@
 # Rust Database Engine
-
 A high-performance, document-oriented database engine written in Rust, featuring BSON document storage with page-based persistence and buffer pool management.
+
+### Dependancies
+- Linux or WSL
+- rustup
+
+### Running Code
+cargo run --bin database
+cargo run --bin database_gui
 
 ### Features
 
