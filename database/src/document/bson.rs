@@ -1,8 +1,8 @@
-use crate::document::{Document, Value};
 use crate::document::object_id::ObjectId;
-use std::collections::BTreeMap;
-use std::io::{Cursor, Read, Write, Seek, SeekFrom};
+use crate::document::{Document, Value};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::collections::BTreeMap;
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -28,6 +28,8 @@ pub enum BsonError {
     Io(#[from] std::io::Error),
     #[error("Invalid BSON type: {0}")]
     InvalidType(u8),
+    #[error("Unsupported value type for basic encoding")]
+    UnsupportedType(i32),
     #[error("Invalid string encoding")]
     InvalidString,
     #[error("Document too large: {0} bytes")]
@@ -65,7 +67,7 @@ pub struct BsonEncoder<W> {
 }
 
 impl<W: Write + Seek> BsonEncoder<W> {
-    pub fn new (writer: W) -> Self {
+    pub fn new(writer: W) -> Self {
         Self {
             writer,
             memory_limit: 16 * 1024 * 1024, // 16MB default
@@ -88,9 +90,9 @@ impl<W: Write + Seek> BsonEncoder<W> {
 
     /// Set a progress callback function
     /// The callback receives (bytes_written, total_bytes) where total_bytes is 0 if unknown
-    pub fn with_progress_callback<F>(mut self, callback: F) -> Self 
-    where 
-        F: FnMut(usize, usize) + Send + 'static 
+    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(usize, usize) + Send + 'static,
     {
         self.progress_callback = Some(Box::new(callback));
         self
@@ -117,7 +119,7 @@ impl<W: Write + Seek> BsonEncoder<W> {
 
         // Write placeholder length
         self.writer.write_u32::<LittleEndian>(0)?;
-        
+
         // Stream all data directly to writer
         for (key, value) in &doc.data {
             self.encode_field(key, value, 0)?; // Start at depth 0
@@ -125,20 +127,24 @@ impl<W: Write + Seek> BsonEncoder<W> {
             self.update_progress(current_pos, estimated_size);
         }
         self.writer.write_u8(0x00)?;
-        
+
         // Go back and update length
         let current_pos = self.writer.stream_position()?;
         self.writer.seek(SeekFrom::Start(0))?;
         self.writer.write_u32::<LittleEndian>(current_pos as u32)?;
-        
+
         // Final progress update with actual final size
         self.update_progress(current_pos as usize, current_pos as usize);
-        
+
         Ok(())
     }
 
     /// Encode only specific fields from a document
-    pub fn encode_partial_document(&mut self, doc: &Document, fields: &[&str]) -> Result<(), BsonError> {
+    pub fn encode_partial_document(
+        &mut self,
+        doc: &Document,
+        fields: &[&str],
+    ) -> Result<(), BsonError> {
         // Validate document size before encoding
         let estimated_size = self.estimate_partial_document_size(doc, fields)?;
         if estimated_size > self.memory_limit {
@@ -148,7 +154,7 @@ impl<W: Write + Seek> BsonEncoder<W> {
         // Write placeholder length
         self.writer.write_u32::<LittleEndian>(0)?;
         self.bytes_written += 4;
-        
+
         // Stream only requested fields
         for field_name in fields {
             if let Some(value) = doc.get(*field_name) {
@@ -159,19 +165,24 @@ impl<W: Write + Seek> BsonEncoder<W> {
         }
         self.writer.write_u8(0x00)?;
         self.bytes_written += 1;
-        
+
         // Go back and update length
         let current_pos = self.writer.stream_position()?;
         self.writer.seek(SeekFrom::Start(0))?;
         self.writer.write_u32::<LittleEndian>(current_pos as u32)?;
-        
+
         // Update progress
         self.update_progress(self.bytes_written, self.bytes_written);
-        
+
         Ok(())
     }
 
-    pub fn encode_field(&mut self, key: &str, value: &Value, depth: usize) -> Result<(), BsonError> {
+    pub fn encode_field(
+        &mut self,
+        key: &str,
+        value: &Value,
+        depth: usize,
+    ) -> Result<(), BsonError> {
         // Check nesting depth
         if depth > self.max_nesting_depth {
             return Err(BsonError::NestedDocumentTooDeep);
@@ -180,16 +191,16 @@ impl<W: Write + Seek> BsonEncoder<W> {
         // Write: type_byte + field_name\0 + value_bytes
         self.writer.write_u8(value_to_bson_type(value))?;
         self.bytes_written += 1;
-        
+
         self.writer.write_all(key.as_bytes())?;
         self.bytes_written += key.len();
-        
+
         self.writer.write_u8(0x00)?; // null terminator for field name
         self.bytes_written += 1;
-        
+
         // Use streaming encoding for large values
         self.encode_value_streaming(value, depth)?;
-        
+
         Ok(())
     }
 
@@ -240,7 +251,8 @@ impl<W: Write + Seek> BsonEncoder<W> {
                 Ok(())
             }
             Value::DateTime(dt) => {
-                self.writer.write_i64::<LittleEndian>(dt.timestamp_millis())?;
+                self.writer
+                    .write_i64::<LittleEndian>(dt.timestamp_millis())?;
                 self.bytes_written += 8;
                 Ok(())
             }
@@ -257,7 +269,8 @@ impl<W: Write + Seek> BsonEncoder<W> {
     /// Memory-efficient array encoding that streams elements
     fn encode_array_streaming(&mut self, arr: &[Value], depth: usize) -> Result<(), BsonError> {
         // Check array size limit
-        if arr.len() > 1_000_000 { // 1M elements limit
+        if arr.len() > 1_000_000 {
+            // 1M elements limit
             return Err(BsonError::ArrayTooLarge(arr.len()));
         }
 
@@ -265,68 +278,76 @@ impl<W: Write + Seek> BsonEncoder<W> {
         let length_pos = self.writer.stream_position()?;
         self.writer.write_u32::<LittleEndian>(0)?;
         self.bytes_written += 4;
-        
+
         // Stream array elements
         for (i, item) in arr.iter().enumerate() {
             self.encode_field(&i.to_string(), item, depth + 1)?;
         }
-        
+
         self.writer.write_u8(0x00)?; // Null terminator
         self.bytes_written += 1;
-        
+
         // Update array length
         let current_pos = self.writer.stream_position()?;
         let array_length = (current_pos - length_pos) as u32;
         self.writer.seek(SeekFrom::Start(length_pos))?;
         self.writer.write_u32::<LittleEndian>(array_length)?;
         self.writer.seek(SeekFrom::Start(current_pos))?;
-        
+
         Ok(())
     }
 
     /// Memory-efficient object encoding that streams fields
-    fn encode_object_streaming(&mut self, obj: &BTreeMap<String, Value>, depth: usize) -> Result<(), BsonError> {
+    fn encode_object_streaming(
+        &mut self,
+        obj: &BTreeMap<String, Value>,
+        depth: usize,
+    ) -> Result<(), BsonError> {
         // Write placeholder length
         let length_pos = self.writer.stream_position()?;
         self.writer.write_u32::<LittleEndian>(0)?;
         self.bytes_written += 4;
-        
+
         // Stream object fields
         for (key, val) in obj {
             self.encode_field(key, val, depth + 1)?;
         }
-        
+
         self.writer.write_u8(0x00)?; // Null terminator
         self.bytes_written += 1;
-        
+
         // Update object length
         let current_pos = self.writer.stream_position()?;
         let object_length = (current_pos - length_pos) as u32;
         self.writer.seek(SeekFrom::Start(length_pos))?;
         self.writer.write_u32::<LittleEndian>(object_length)?;
         self.writer.seek(SeekFrom::Start(current_pos))?;
-        
+
         Ok(())
     }
 
     /// Estimate document size for validation
     fn estimate_document_size(&self, doc: &Document) -> Result<usize, BsonError> {
         let mut size = 4; // Length prefix
-        
+
         for (key, value) in &doc.data {
             size += 1; // Type byte
             size += key.len() + 1; // Field name + null terminator
             size += self.estimate_value_size(value, 0)?;
         }
-        
+
         size += 1; // Document null terminator
         Ok(size)
     }
 
     /// Estimate partial document size for validation
-    fn estimate_partial_document_size(&self, doc: &Document, fields: &[&str]) -> Result<usize, BsonError> {
+    fn estimate_partial_document_size(
+        &self,
+        doc: &Document,
+        fields: &[&str],
+    ) -> Result<usize, BsonError> {
         let mut size = 4; // Length prefix
-        
+
         for field_name in fields {
             if let Some(value) = doc.get(*field_name) {
                 size += 1; // Type byte
@@ -334,7 +355,7 @@ impl<W: Write + Seek> BsonEncoder<W> {
                 size += self.estimate_value_size(value, 0)?;
             }
         }
-        
+
         size += 1; // Document null terminator
         Ok(size)
     }
@@ -417,9 +438,9 @@ impl<R: Read> BsonDecoder<R> {
 
     /// Set a progress callback function
     /// The callback receives (bytes_read, total_bytes) where total_bytes is 0 if unknown
-    pub fn with_progress_callback<F>(mut self, callback: F) -> Self 
-    where 
-        F: FnMut(usize, usize) + Send + 'static 
+    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(usize, usize) + Send + 'static,
     {
         self.progress_callback = Some(Box::new(callback));
         self
@@ -436,12 +457,12 @@ impl<R: Read> BsonDecoder<R> {
         let mut length_bytes = [0u8; 4];
         self.read_exact(&mut length_bytes)?;
         let document_length = u32::from_le_bytes(length_bytes) as usize;
-        
+
         // Validate document length
         if document_length > self.memory_limit {
             return Err(BsonError::DocumentTooLarge(document_length));
         }
-        
+
         if document_length < 5 {
             return Err(BsonError::InvalidEmbeddedDocument);
         }
@@ -452,26 +473,26 @@ impl<R: Read> BsonDecoder<R> {
         // Create a buffer for the document data (within memory limit)
         let mut document_data = Vec::with_capacity(document_length - 4);
         let mut temp_buffer = [0u8; 4096]; // 4KB buffer for streaming reads
-        
+
         let mut remaining_bytes = document_length - 4;
-        
+
         while remaining_bytes > 0 {
             let chunk_size = std::cmp::min(remaining_bytes, temp_buffer.len());
             let bytes_read = self.read(&mut temp_buffer[..chunk_size])?;
-            
+
             if bytes_read == 0 {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: remaining_bytes, 
-                    actual: 0 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: remaining_bytes,
+                    actual: 0,
                 });
             }
-            
+
             document_data.extend_from_slice(&temp_buffer[..bytes_read]);
             remaining_bytes -= bytes_read;
-            
+
             // Update progress
             self.update_progress(document_length - remaining_bytes, document_length);
-            
+
             // Check memory usage periodically
             if document_data.len() > self.memory_limit {
                 return Err(BsonError::DocumentTooLarge(document_data.len()));
@@ -482,7 +503,7 @@ impl<R: Read> BsonDecoder<R> {
         let mut full_document = Vec::with_capacity(document_length);
         full_document.extend_from_slice(&length_bytes);
         full_document.extend_from_slice(&document_data);
-        
+
         // Use the proper deserialize_document function that handles _id correctly
         deserialize_document(&full_document)
     }
@@ -506,12 +527,12 @@ impl<R: Read> BsonDecoder<R> {
         let mut length_bytes = [0u8; 4];
         self.read_exact(&mut length_bytes)?;
         let document_length = u32::from_le_bytes(length_bytes) as usize;
-        
+
         // Validate document length
         if document_length > self.memory_limit {
             return Err(BsonError::DocumentTooLarge(document_length));
         }
-        
+
         if document_length < 5 {
             return Err(BsonError::InvalidEmbeddedDocument);
         }
@@ -522,26 +543,26 @@ impl<R: Read> BsonDecoder<R> {
         // Create a buffer for the document data (within memory limit)
         let mut document_data = Vec::with_capacity(document_length - 4);
         let mut temp_buffer = [0u8; 4096]; // 4KB buffer for streaming reads
-        
+
         let mut remaining_bytes = document_length - 4;
-        
+
         while remaining_bytes > 0 {
             let chunk_size = std::cmp::min(remaining_bytes, temp_buffer.len());
             let bytes_read = self.read(&mut temp_buffer[..chunk_size])?;
-            
+
             if bytes_read == 0 {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: remaining_bytes, 
-                    actual: 0 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: remaining_bytes,
+                    actual: 0,
                 });
             }
-            
+
             document_data.extend_from_slice(&temp_buffer[..bytes_read]);
             remaining_bytes -= bytes_read;
-            
+
             // Update progress
             self.update_progress(document_length - remaining_bytes, document_length);
-            
+
             // Check memory usage periodically
             if document_data.len() > self.memory_limit {
                 return Err(BsonError::DocumentTooLarge(document_data.len()));
@@ -552,20 +573,22 @@ impl<R: Read> BsonDecoder<R> {
         let mut cursor = Cursor::new(document_data.as_slice());
         let mut data_map = BTreeMap::new();
         let mut found_fields = std::collections::HashSet::new();
-        
+
         loop {
             let field_type = match cursor.read_u8() {
                 Ok(ft) => ft,
                 Err(_) => break, // End of data
             };
-            
-            if field_type == 0x00 { break; } // Null terminator
-            
+
+            if field_type == 0x00 {
+                break;
+            } // Null terminator
+
             let field_name = read_cstring(&mut cursor)?;
             if field_name.is_empty() {
                 return Err(BsonError::MalformedFieldName);
             }
-            
+
             // Check if this field is requested
             if fields.contains(&field_name.as_str()) {
                 let field_value = deserialize_value(&mut cursor, field_type)?;
@@ -576,14 +599,14 @@ impl<R: Read> BsonDecoder<R> {
                 self.skip_value(&mut cursor, field_type)?;
             }
         }
-        
+
         // Check if all requested fields were found
         for field in fields {
             if !found_fields.contains(*field) {
                 return Err(BsonError::FieldNotFound(field.to_string()));
             }
         }
-        
+
         Ok(Document {
             data: data_map,
             id: Value::ObjectId(ObjectId::new()),
@@ -617,9 +640,9 @@ impl<R: Read> BsonDecoder<R> {
                 }
                 let available = cursor.get_ref().len() - cursor.position() as usize;
                 if available < length as usize {
-                    return Err(BsonError::UnexpectedEndOfData { 
-                        expected: length as usize, 
-                        actual: available 
+                    return Err(BsonError::UnexpectedEndOfData {
+                        expected: length as usize,
+                        actual: available,
                     });
                 }
                 cursor.seek(SeekFrom::Current(length as i64))?;
@@ -636,9 +659,9 @@ impl<R: Read> BsonDecoder<R> {
                 }
                 let available = cursor.get_ref().len() - cursor.position() as usize;
                 if available < (length as usize - 4) {
-                    return Err(BsonError::UnexpectedEndOfData { 
-                        expected: length as usize - 4, 
-                        actual: available 
+                    return Err(BsonError::UnexpectedEndOfData {
+                        expected: length as usize - 4,
+                        actual: available,
                     });
                 }
                 cursor.seek(SeekFrom::Current((length as i64) - 4))?;
@@ -655,9 +678,9 @@ impl<R: Read> BsonDecoder<R> {
                 }
                 let available = cursor.get_ref().len() - cursor.position() as usize;
                 if available < (length as usize + 1) {
-                    return Err(BsonError::UnexpectedEndOfData { 
-                        expected: length as usize + 1, 
-                        actual: available 
+                    return Err(BsonError::UnexpectedEndOfData {
+                        expected: length as usize + 1,
+                        actual: available,
                     });
                 }
                 cursor.seek(SeekFrom::Current((length as i64) + 1))?; // +1 for subtype
@@ -674,12 +697,12 @@ impl<R: Read> BsonDecoder<R> {
         let mut length_bytes = [0u8; 4];
         self.read_exact(&mut length_bytes)?;
         let document_length = u32::from_le_bytes(length_bytes) as usize;
-        
+
         // Validate document length
         if document_length > self.memory_limit {
             return Err(BsonError::DocumentTooLarge(document_length));
         }
-        
+
         if document_length < 5 {
             return Err(BsonError::InvalidEmbeddedDocument);
         }
@@ -687,20 +710,20 @@ impl<R: Read> BsonDecoder<R> {
         // Create a buffer for the document data
         let mut document_data = Vec::with_capacity(document_length - 4);
         let mut temp_buffer = [0u8; 4096];
-        
+
         let mut remaining_bytes = document_length - 4;
-        
+
         while remaining_bytes > 0 {
             let chunk_size = std::cmp::min(remaining_bytes, temp_buffer.len());
             let bytes_read = self.read(&mut temp_buffer[..chunk_size])?;
-            
+
             if bytes_read == 0 {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: remaining_bytes, 
-                    actual: 0 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: remaining_bytes,
+                    actual: 0,
                 });
             }
-            
+
             document_data.extend_from_slice(&temp_buffer[..bytes_read]);
             remaining_bytes -= bytes_read;
         }
@@ -708,26 +731,28 @@ impl<R: Read> BsonDecoder<R> {
         // Extract only field names
         let mut cursor = Cursor::new(document_data.as_slice());
         let mut field_names = Vec::new();
-        
+
         loop {
             let field_type = match cursor.read_u8() {
                 Ok(ft) => ft,
                 Err(_) => break, // End of data
             };
-            
-            if field_type == 0x00 { break; } // Null terminator
-            
+
+            if field_type == 0x00 {
+                break;
+            } // Null terminator
+
             let field_name = read_cstring(&mut cursor)?;
             if field_name.is_empty() {
                 return Err(BsonError::MalformedFieldName);
             }
-            
+
             field_names.push(field_name);
-            
+
             // Skip the value
             self.skip_value(&mut cursor, field_type)?;
         }
-        
+
         Ok(field_names)
     }
 
@@ -737,9 +762,9 @@ impl<R: Read> BsonDecoder<R> {
         while total_read < buf.len() {
             match self.reader.read(&mut buf[total_read..]) {
                 Ok(0) => {
-                    return Err(BsonError::UnexpectedEndOfData { 
-                        expected: buf.len(), 
-                        actual: total_read 
+                    return Err(BsonError::UnexpectedEndOfData {
+                        expected: buf.len(),
+                        actual: total_read,
                     });
                 }
                 Ok(n) => {
@@ -775,35 +800,39 @@ impl<R: Read> BsonDecoder<R> {
 /// Serialize document to BSON with 4-byte little-endian length prefix
 pub fn serialize_document(doc: &Document) -> Result<Vec<u8>, BsonError> {
     let mut buffer = Vec::new();
-    
+
     // Reserve space for length (4 bytes)
     buffer.write_u32::<LittleEndian>(0)?;
-    
+
     // First serialize the _id field
     serialize_field(&mut buffer, "_id", &doc.id)?;
-    
+
     // Then serialize all other fields
     for (key, value) in &doc.data {
         serialize_field(&mut buffer, key, value)?;
     }
-    
+
     // Null terminator
     buffer.write_u8(0x00)?;
-    
+
     // Write actual length at beginning
     let total_length = buffer.len() as u32;
     let mut cursor = Cursor::new(&mut buffer);
     cursor.set_position(0);
     cursor.write_u32::<LittleEndian>(total_length)?;
-    
+
     Ok(buffer)
 }
 
 fn catch_unexpected_eof<T>(f: impl FnOnce() -> Result<T, BsonError>) -> Result<T, BsonError> {
     use std::io::ErrorKind;
     match f() {
-        Err(BsonError::Io(e)) if e.kind() == ErrorKind::UnexpectedEof =>
-            Err(BsonError::UnexpectedEndOfData { expected: 1, actual: 0 }),
+        Err(BsonError::Io(e)) if e.kind() == ErrorKind::UnexpectedEof => {
+            Err(BsonError::UnexpectedEndOfData {
+                expected: 1,
+                actual: 0,
+            })
+        }
         other => other,
     }
 }
@@ -812,42 +841,44 @@ fn catch_unexpected_eof<T>(f: impl FnOnce() -> Result<T, BsonError>) -> Result<T
 pub fn deserialize_document(data: &[u8]) -> Result<Document, BsonError> {
     catch_unexpected_eof(|| {
         if data.len() < 4 {
-            return Err(BsonError::UnexpectedEndOfData { 
-                expected: 4, 
-                actual: data.len() 
+            return Err(BsonError::UnexpectedEndOfData {
+                expected: 4,
+                actual: data.len(),
             });
         }
-        
+
         let mut cursor = Cursor::new(data);
         let document_length = cursor.read_u32::<LittleEndian>()? as usize;
-        
+
         // Validate document length
         if document_length != data.len() {
-            return Err(BsonError::InvalidLength { 
-                expected: document_length, 
-                actual: data.len() 
+            return Err(BsonError::InvalidLength {
+                expected: document_length,
+                actual: data.len(),
             });
         }
-        
+
         // Check for maximum document size (16MB)
         if document_length > 16 * 1024 * 1024 {
             return Err(BsonError::DocumentTooLarge(document_length));
         }
-        
+
         let mut data_map = BTreeMap::new();
         let mut document_id = Value::ObjectId(ObjectId::new()); // Default ID if not found
-        
+
         loop {
             let field_type = cursor.read_u8()?;
-            if field_type == 0x00 { break; } // Null terminator
-            
+            if field_type == 0x00 {
+                break;
+            } // Null terminator
+
             let field_name = read_cstring(&mut cursor)?;
             if field_name.is_empty() {
                 return Err(BsonError::MalformedFieldName);
             }
-            
+
             let field_value = deserialize_value(&mut cursor, field_type)?;
-            
+
             // Special handling for _id field
             if field_name == "_id" {
                 document_id = field_value;
@@ -855,7 +886,7 @@ pub fn deserialize_document(data: &[u8]) -> Result<Document, BsonError> {
                 data_map.insert(field_name, field_value);
             }
         }
-        
+
         Ok(Document {
             data: data_map,
             id: document_id,
@@ -889,7 +920,9 @@ fn value_to_bson_type(value: &Value) -> u8 {
 fn serialize_value(buffer: &mut Vec<u8>, value: &Value) -> Result<(), BsonError> {
     match value {
         Value::Null => Ok(()),
-        Value::Bool(b) => buffer.write_u8(if *b { 0x01 } else { 0x00 }).map_err(Into::into),
+        Value::Bool(b) => buffer
+            .write_u8(if *b { 0x01 } else { 0x00 })
+            .map_err(Into::into),
         Value::I32(i) => buffer.write_i32::<LittleEndian>(*i).map_err(Into::into),
         Value::I64(i) => buffer.write_i64::<LittleEndian>(*i).map_err(Into::into),
         Value::F64(f) => buffer.write_f64::<LittleEndian>(*f).map_err(Into::into),
@@ -910,12 +943,12 @@ fn serialize_value(buffer: &mut Vec<u8>, value: &Value) -> Result<(), BsonError>
                 serialize_field(&mut array_buffer, &i.to_string(), item)?;
             }
             array_buffer.write_u8(0x00)?;
-            
+
             let length = array_buffer.len() as u32;
             let mut cursor = Cursor::new(&mut array_buffer);
             cursor.set_position(0);
             cursor.write_u32::<LittleEndian>(length)?;
-            
+
             buffer.extend_from_slice(&array_buffer);
             Ok(())
         }
@@ -926,18 +959,18 @@ fn serialize_value(buffer: &mut Vec<u8>, value: &Value) -> Result<(), BsonError>
                 serialize_field(&mut obj_buffer, key, val)?;
             }
             obj_buffer.write_u8(0x00)?;
-            
+
             let length = obj_buffer.len() as u32;
             let mut cursor = Cursor::new(&mut obj_buffer);
             cursor.set_position(0);
             cursor.write_u32::<LittleEndian>(length)?;
-            
+
             buffer.extend_from_slice(&obj_buffer);
             Ok(())
         }
-        Value::DateTime(dt) => {
-            buffer.write_i64::<LittleEndian>(dt.timestamp_millis()).map_err(Into::into)
-        }
+        Value::DateTime(dt) => buffer
+            .write_i64::<LittleEndian>(dt.timestamp_millis())
+            .map_err(Into::into),
         Value::Binary(bin) => {
             buffer.write_i32::<LittleEndian>(bin.len() as i32)?;
             buffer.write_u8(0x00)?; // Subtype
@@ -951,7 +984,10 @@ fn read_u8_checked(cursor: &mut Cursor<&[u8]>) -> Result<u8, BsonError> {
     use std::io::ErrorKind;
     match cursor.read_u8() {
         Ok(b) => Ok(b),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData { expected: 1, actual: 0 }),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData {
+            expected: 1,
+            actual: 0,
+        }),
         Err(e) => Err(BsonError::Io(e)),
     }
 }
@@ -959,7 +995,10 @@ fn read_i32_checked(cursor: &mut Cursor<&[u8]>) -> Result<i32, BsonError> {
     use std::io::ErrorKind;
     match cursor.read_i32::<LittleEndian>() {
         Ok(b) => Ok(b),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData { expected: 4, actual: 0 }),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData {
+            expected: 4,
+            actual: 0,
+        }),
         Err(e) => Err(BsonError::Io(e)),
     }
 }
@@ -967,7 +1006,10 @@ fn read_i64_checked(cursor: &mut Cursor<&[u8]>) -> Result<i64, BsonError> {
     use std::io::ErrorKind;
     match cursor.read_i64::<LittleEndian>() {
         Ok(b) => Ok(b),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData { expected: 8, actual: 0 }),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData {
+            expected: 8,
+            actual: 0,
+        }),
         Err(e) => Err(BsonError::Io(e)),
     }
 }
@@ -975,7 +1017,10 @@ fn read_f64_checked(cursor: &mut Cursor<&[u8]>) -> Result<f64, BsonError> {
     use std::io::ErrorKind;
     match cursor.read_f64::<LittleEndian>() {
         Ok(b) => Ok(b),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData { expected: 8, actual: 0 }),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData {
+            expected: 8,
+            actual: 0,
+        }),
         Err(e) => Err(BsonError::Io(e)),
     }
 }
@@ -983,7 +1028,10 @@ fn read_exact_checked(cursor: &mut Cursor<&[u8]>, buf: &mut [u8]) -> Result<(), 
     use std::io::ErrorKind;
     match cursor.read_exact(buf) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData { expected: buf.len(), actual: 0 }),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => Err(BsonError::UnexpectedEndOfData {
+            expected: buf.len(),
+            actual: 0,
+        }),
         Err(e) => Err(BsonError::Io(e)),
     }
 }
@@ -1002,16 +1050,15 @@ fn deserialize_value(cursor: &mut Cursor<&[u8]>, bson_type: u8) -> Result<Value,
             }
             let available = cursor.get_ref().len() - cursor.position() as usize;
             if available < length as usize {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: length as usize, 
-                    actual: available 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: length as usize,
+                    actual: available,
                 });
             }
             let mut bytes = vec![0u8; length as usize - 1];
             read_exact_checked(cursor, &mut bytes)?;
             read_u8_checked(cursor)?; // Skip null terminator
-            let s = String::from_utf8(bytes)
-                .map_err(|_| BsonError::InvalidString)?;
+            let s = String::from_utf8(bytes).map_err(|_| BsonError::InvalidString)?;
             Ok(Value::String(s))
         }
         TYPE_OBJECTID => {
@@ -1026,9 +1073,9 @@ fn deserialize_value(cursor: &mut Cursor<&[u8]>, bson_type: u8) -> Result<Value,
             }
             let available = cursor.get_ref().len() - cursor.position() as usize;
             if available < (length as usize - 4) {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: length as usize - 4, 
-                    actual: available 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: length as usize - 4,
+                    actual: available,
                 });
             }
             let mut data = vec![0u8; length as usize - 4];
@@ -1041,7 +1088,9 @@ fn deserialize_value(cursor: &mut Cursor<&[u8]>, bson_type: u8) -> Result<Value,
                     Err(BsonError::UnexpectedEndOfData { .. }) => break,
                     Err(e) => return Err(e),
                 };
-                if field_type == 0x00 { break; }
+                if field_type == 0x00 {
+                    break;
+                }
                 let field_name = read_cstring(&mut embedded_cursor)?;
                 if field_name.is_empty() {
                     return Err(BsonError::MalformedFieldName);
@@ -1054,7 +1103,9 @@ fn deserialize_value(cursor: &mut Cursor<&[u8]>, bson_type: u8) -> Result<Value,
                 let mut arr = Vec::new();
                 for (key, value) in obj {
                     if let Ok(index) = key.parse::<usize>() {
-                        while arr.len() <= index { arr.push(Value::Null); }
+                        while arr.len() <= index {
+                            arr.push(Value::Null);
+                        }
                         arr[index] = value;
                     }
                 }
@@ -1076,9 +1127,9 @@ fn deserialize_value(cursor: &mut Cursor<&[u8]>, bson_type: u8) -> Result<Value,
             }
             let available = cursor.get_ref().len() - cursor.position() as usize;
             if available < (length as usize + 1) {
-                return Err(BsonError::UnexpectedEndOfData { 
-                    expected: length as usize + 1, 
-                    actual: available 
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: length as usize + 1,
+                    actual: available,
                 });
             }
             read_u8_checked(cursor)?; // Skip subtype
@@ -1094,58 +1145,65 @@ fn read_cstring(cursor: &mut Cursor<&[u8]>) -> Result<String, BsonError> {
     use std::io::ErrorKind;
     let mut bytes = Vec::new();
     let max_length = 1024; // Reasonable limit for field names
-    
+
     loop {
         match cursor.read_u8() {
             Ok(byte) => {
-                if byte == 0x00 { break; }
+                if byte == 0x00 {
+                    break;
+                }
                 bytes.push(byte);
                 if bytes.len() > max_length {
                     return Err(BsonError::MissingNullTerminator);
                 }
             }
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
-                return Err(BsonError::UnexpectedEndOfData { expected: 1, actual: 0 });
+                return Err(BsonError::UnexpectedEndOfData {
+                    expected: 1,
+                    actual: 0,
+                });
             }
             Err(e) => return Err(BsonError::Io(e)),
         }
     }
-    String::from_utf8(bytes)
-        .map_err(|_| BsonError::InvalidString)
+    String::from_utf8(bytes).map_err(|_| BsonError::InvalidString)
 }
 
 /// Encode a single Value into BSON binary format (basic types only)
 /// Returns value bytes
-pub fn encode_value(value: &Value) -> Vec<u8> {
+pub fn encode_value(value: &Value) -> Result<Vec<u8>, BsonError> {
     use crate::document::bson::*;
     use byteorder::{LittleEndian, WriteBytesExt};
     let mut buf = Vec::new();
     match value {
-        Value::Null => {},
-        Value::Bool(b) => { buf.push(if *b { 0x01 } else { 0x00 }); },
-        Value::I32(i) => { buf.write_i32::<LittleEndian>(*i).unwrap(); },
-        Value::I64(i) => { buf.write_i64::<LittleEndian>(*i).unwrap(); },
-        Value::F64(f) => { buf.write_f64::<LittleEndian>(*f).unwrap(); },
+        Value::Null => {}
+        Value::Bool(b) => {
+            buf.push(if *b { 0x01 } else { 0x00 });
+        }
+        Value::I32(i) => {
+            buf.write_i32::<LittleEndian>(*i)?;
+        }
+        Value::I64(i) => buf.write_i64::<LittleEndian>(*i)?,
+        Value::F64(f) => buf.write_f64::<LittleEndian>(*f)?,
         Value::String(s) => {
-            buf.write_i32::<LittleEndian>(s.len() as i32 + 1).unwrap();
+            buf.write_i32::<LittleEndian>(s.len() as i32 + 1)?;
             buf.extend_from_slice(s.as_bytes());
             buf.push(0x00);
-        },
-        Value::ObjectId(oid) => { buf.extend_from_slice(&oid.to_bytes()); },
+        }
+        Value::ObjectId(oid) => {
+            buf.extend_from_slice(&oid.to_bytes());
+        }
         Value::Binary(bin) => {
-            buf.write_i32::<LittleEndian>(bin.len() as i32).unwrap();
+            buf.write_i32::<LittleEndian>(bin.len() as i32)?;
             buf.push(0x00); // subtype
             buf.extend_from_slice(bin);
-        },
-        Value::DateTime(dt) => {
-            buf.write_i64::<LittleEndian>(dt.timestamp_millis()).unwrap();
-        },
-        _ => {
-            // Not supported in this basic function
-            panic!("Not supported in this basic function");
         }
+        Value::DateTime(dt) => {
+            buf.write_i64::<LittleEndian>(dt.timestamp_millis())?;
+        }
+        _ => return Err(BsonError::UnsupportedType(0)),
     }
-    buf
+    Ok(buf)
 }
 
 /// Decode a single Value from BSON binary format (basic types only)
@@ -1160,7 +1218,7 @@ pub fn decode_value(data: &[u8], bson_type: u8) -> Result<(Value, usize), BsonEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Utc};
+    use chrono::Utc;
 
     // ============================================================================
     // BASIC FUNCTIONALITY TESTS
@@ -1173,13 +1231,13 @@ mod tests {
         let mut doc = Document::new();
         doc.set("name", Value::String("John".to_string()));
         doc.set("age", Value::I32(30));
-        
+
         let serialized = serialize_document(&doc).unwrap();
-        
+
         // First 4 bytes should be document length in little-endian
         let mut cursor = Cursor::new(&serialized);
         let length = cursor.read_u32::<LittleEndian>().unwrap();
-        
+
         assert_eq!(length as usize, serialized.len());
         assert!(length > 0);
     }
@@ -1192,11 +1250,14 @@ mod tests {
         doc.set("name", Value::String("Alice".to_string()));
         doc.set("age", Value::I32(25));
         doc.set("active", Value::Bool(true));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
-        assert_eq!(deserialized.get("name"), Some(&Value::String("Alice".to_string())));
+
+        assert_eq!(
+            deserialized.get("name"),
+            Some(&Value::String("Alice".to_string()))
+        );
         assert_eq!(deserialized.get("age"), Some(&Value::I32(25)));
         assert_eq!(deserialized.get("active"), Some(&Value::Bool(true)));
     }
@@ -1216,19 +1277,27 @@ mod tests {
             ("int32", Value::I32(42), TYPE_INT32),
             ("int64", Value::I64(1234567890123456789), TYPE_INT64),
             ("double", Value::F64(3.14159), TYPE_DOUBLE),
-            ("string", Value::String("Hello, World!".to_string()), TYPE_STRING),
+            (
+                "string",
+                Value::String("Hello, World!".to_string()),
+                TYPE_STRING,
+            ),
             ("objectid", Value::ObjectId(ObjectId::new()), TYPE_OBJECTID),
             ("datetime", Value::DateTime(Utc::now()), TYPE_DATETIME),
-            ("binary", Value::Binary(vec![0x01, 0x02, 0x03, 0x04]), TYPE_BINARY),
+            (
+                "binary",
+                Value::Binary(vec![0x01, 0x02, 0x03, 0x04]),
+                TYPE_BINARY,
+            ),
         ];
 
         for (name, value, _bson_type) in test_cases {
             let mut doc = Document::new();
             doc.set("field", value.clone());
-            
+
             let serialized = serialize_document(&doc).unwrap();
             let deserialized = deserialize_document(&serialized).unwrap();
-            
+
             // Special handling for DateTime (precision differences)
             match (&value, deserialized.get("field")) {
                 (Value::DateTime(original), Some(Value::DateTime(decoded))) => {
@@ -1240,8 +1309,12 @@ mod tests {
                     assert_eq!(decoded, original, "Failed for type: {}", name);
                 }
                 _ => {
-                    assert_eq!(deserialized.get("field"), Some(&value), 
-                              "Failed for type: {}", name);
+                    assert_eq!(
+                        deserialized.get("field"),
+                        Some(&value),
+                        "Failed for type: {}",
+                        name
+                    );
                 }
             }
         }
@@ -1259,10 +1332,10 @@ mod tests {
             Value::F64(3.14),
         ];
         doc.set("items", Value::Array(array));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
+
         if let Some(Value::Array(deserialized_array)) = deserialized.get("items") {
             assert_eq!(deserialized_array.len(), 4);
             assert_eq!(deserialized_array[0], Value::String("first".to_string()));
@@ -1281,18 +1354,24 @@ mod tests {
         let mut inner_doc = Document::new();
         inner_doc.set("inner_field", Value::String("nested value".to_string()));
         inner_doc.set("inner_number", Value::I32(123));
-        
+
         let mut outer_doc = Document::new();
         outer_doc.set("outer_field", Value::String("outer value".to_string()));
         outer_doc.set("nested", Value::Object(inner_doc.data));
-        
+
         let serialized = serialize_document(&outer_doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
-        assert_eq!(deserialized.get("outer_field"), Some(&Value::String("outer value".to_string())));
-        
+
+        assert_eq!(
+            deserialized.get("outer_field"),
+            Some(&Value::String("outer value".to_string()))
+        );
+
         if let Some(Value::Object(nested_data)) = deserialized.get("nested") {
-            assert_eq!(nested_data.get("inner_field"), Some(&Value::String("nested value".to_string())));
+            assert_eq!(
+                nested_data.get("inner_field"),
+                Some(&Value::String("nested value".to_string()))
+            );
             assert_eq!(nested_data.get("inner_number"), Some(&Value::I32(123)));
         } else {
             panic!("Expected nested object");
@@ -1305,22 +1384,28 @@ mod tests {
         // Create a deeply nested structure: object -> array -> object -> array -> object
         let mut deepest = Document::new();
         deepest.set("deepest_field", Value::String("deepest".to_string()));
-        
+
         let mut level3 = Document::new();
-        level3.set("level3_array", Value::Array(vec![Value::Object(deepest.data)]));
-        
+        level3.set(
+            "level3_array",
+            Value::Array(vec![Value::Object(deepest.data)]),
+        );
+
         let mut level2 = Document::new();
         level2.set("level2_object", Value::Object(level3.data));
-        
+
         let mut level1 = Document::new();
-        level1.set("level1_array", Value::Array(vec![Value::Object(level2.data)]));
-        
+        level1.set(
+            "level1_array",
+            Value::Array(vec![Value::Object(level2.data)]),
+        );
+
         let mut root = Document::new();
         root.set("root_object", Value::Object(level1.data));
-        
+
         let serialized = serialize_document(&root).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
+
         // Navigate through the nested structure
         if let Some(Value::Object(root_obj)) = deserialized.get("root_object") {
             if let Some(Value::Array(level1_arr)) = root_obj.get("level1_array") {
@@ -1328,8 +1413,10 @@ mod tests {
                     if let Some(Value::Object(level3_obj)) = level2_obj.get("level2_object") {
                         if let Some(Value::Array(level3_arr)) = level3_obj.get("level3_array") {
                             if let Some(Value::Object(deepest_obj)) = level3_arr.get(0) {
-                                assert_eq!(deepest_obj.get("deepest_field"), 
-                                          Some(&Value::String("deepest".to_string())));
+                                assert_eq!(
+                                    deepest_obj.get("deepest_field"),
+                                    Some(&Value::String("deepest".to_string()))
+                                );
                             }
                         }
                     }
@@ -1348,7 +1435,7 @@ mod tests {
         let doc = Document::new();
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
+
         // Empty document now includes _id field: length prefix (4 bytes) + _id field (1 + 3 + 12 = 16) + null terminator (1 byte) = 22 bytes
         assert_eq!(serialized.len(), 22);
         // Data is still empty (doesn't include the _id field in the data map)
@@ -1361,7 +1448,7 @@ mod tests {
     #[test]
     fn test_document_with_many_fields() {
         let mut doc = Document::new();
-        
+
         // Add 1000 fields with different types
         for i in 0..1000 {
             let field_name = format!("field_{}", i);
@@ -1377,14 +1464,17 @@ mod tests {
             };
             doc.set(&field_name, value);
         }
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
+
         assert_eq!(deserialized.data.len(), 1000);
-        
+
         // Verify a few specific fields
-        assert_eq!(deserialized.get("field_0"), Some(&Value::String("string_0".to_string())));
+        assert_eq!(
+            deserialized.get("field_0"),
+            Some(&Value::String("string_0".to_string()))
+        );
         assert_eq!(deserialized.get("field_1"), Some(&Value::I32(1)));
         assert_eq!(deserialized.get("field_5"), Some(&Value::Null));
     }
@@ -1394,28 +1484,32 @@ mod tests {
     fn test_unicode_strings() {
         let unicode_test_cases = vec![
             "Hello, World!",
-            "Привет, мир!", // Russian
-            "你好，世界！", // Chinese
-            "こんにちは、世界！", // Japanese
-            "안녕하세요, 세계!", // Korean
-            "مرحبا بالعالم!", // Arabic
-            "שלום עולם!", // Hebrew
-            "नमस्ते दुनिया!", // Hindi
-            "🌍 Hello World 🌎", // Emojis
-            "Café résumé naïve", // Accented characters
+            "Привет, мир!",         // Russian
+            "你好，世界！",         // Chinese
+            "こんにちは、世界！",   // Japanese
+            "안녕하세요, 세계!",    // Korean
+            "مرحبا بالعالم!",       // Arabic
+            "שלום עולם!",           // Hebrew
+            "नमस्ते दुनिया!",          // Hindi
+            "🌍 Hello World 🌎",    // Emojis
+            "Café résumé naïve",    // Accented characters
             "🚀🚁🚂🚃🚄🚅🚆🚇🚈🚉", // Many emojis
         ];
 
         for (i, unicode_str) in unicode_test_cases.iter().enumerate() {
             let mut doc = Document::new();
             doc.set("unicode", Value::String(unicode_str.to_string()));
-            
+
             let serialized = serialize_document(&doc).unwrap();
             let deserialized = deserialize_document(&serialized).unwrap();
-            
-            assert_eq!(deserialized.get("unicode"), 
-                      Some(&Value::String(unicode_str.to_string())),
-                      "Failed for Unicode string {}: {}", i, unicode_str);
+
+            assert_eq!(
+                deserialized.get("unicode"),
+                Some(&Value::String(unicode_str.to_string())),
+                "Failed for Unicode string {}: {}",
+                i,
+                unicode_str
+            );
         }
     }
 
@@ -1439,12 +1533,12 @@ mod tests {
         for (name, value) in extreme_values {
             let mut doc = Document::new();
             doc.set("number", value.clone());
-            
+
             let serialized = serialize_document(&doc).unwrap();
             let deserialized = deserialize_document(&serialized).unwrap();
-            
+
             let deserialized_value = deserialized.get("number").unwrap();
-            
+
             // Special handling for NaN (NaN != NaN, so we need to check differently)
             if let (Value::F64(original), Value::F64(deserialized)) = (&value, deserialized_value) {
                 if original.is_nan() {
@@ -1465,11 +1559,14 @@ mod tests {
         let long_string = "A".repeat(1024 * 1024); // 1MB string
         let mut doc = Document::new();
         doc.set("long_string", Value::String(long_string.clone()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
-        assert_eq!(deserialized.get("long_string"), Some(&Value::String(long_string)));
+
+        assert_eq!(
+            deserialized.get("long_string"),
+            Some(&Value::String(long_string))
+        );
     }
 
     /// Test large binary data
@@ -1479,14 +1576,17 @@ mod tests {
         let large_binary: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
         let mut doc = Document::new();
         doc.set("large_binary", Value::Binary(large_binary.clone()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
+
         if let Some(Value::Binary(deserialized_binary)) = deserialized.get("large_binary") {
             assert_eq!(deserialized_binary.len(), large_binary.len());
             assert_eq!(&deserialized_binary[..100], &large_binary[..100]); // Check first 100 bytes
-            assert_eq!(&deserialized_binary[large_binary.len()-100..], &large_binary[large_binary.len()-100..]); // Check last 100 bytes
+            assert_eq!(
+                &deserialized_binary[large_binary.len() - 100..],
+                &large_binary[large_binary.len() - 100..]
+            ); // Check last 100 bytes
         } else {
             panic!("Expected binary value");
         }
@@ -1500,14 +1600,26 @@ mod tests {
     #[test]
     fn test_error_handling_empty_data() {
         let result = deserialize_document(&[]);
-        assert!(matches!(result, Err(BsonError::UnexpectedEndOfData { expected: 4, actual: 0 })));
+        assert!(matches!(
+            result,
+            Err(BsonError::UnexpectedEndOfData {
+                expected: 4,
+                actual: 0
+            })
+        ));
     }
 
     /// Test single byte data (insufficient for length prefix)
     #[test]
     fn test_error_handling_single_byte_data() {
         let result = deserialize_document(&[0x01]);
-        assert!(matches!(result, Err(BsonError::UnexpectedEndOfData { expected: 4, actual: 1 })));
+        assert!(matches!(
+            result,
+            Err(BsonError::UnexpectedEndOfData {
+                expected: 4,
+                actual: 1
+            })
+        ));
     }
 
     /// Test data with invalid length prefix (negative length)
@@ -1516,7 +1628,7 @@ mod tests {
         // Create data with negative length (interpreted as very large positive due to unsigned)
         let mut data = vec![0xFF, 0xFF, 0xFF, 0xFF]; // -1 as u32 = 4,294,967,295
         data.extend_from_slice(b"some data");
-        
+
         let result = deserialize_document(&data);
         // This should fail due to document being too large
         assert!(result.is_err());
@@ -1533,13 +1645,15 @@ mod tests {
         data.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]); // String length 5
         data.extend_from_slice(b"test\0"); // String content
         data.push(0x00); // Null terminator
-        
+
         // Create a copy with wrong length
         let mut wrong_data = data.clone();
         let mut cursor = Cursor::new(&mut wrong_data);
         cursor.set_position(0);
-        cursor.write_u32::<LittleEndian>(data.len() as u32 + 10).unwrap(); // Wrong length
-        
+        cursor
+            .write_u32::<LittleEndian>(data.len() as u32 + 10)
+            .unwrap(); // Wrong length
+
         let result = deserialize_document(&wrong_data);
         assert!(matches!(result, Err(BsonError::InvalidLength { .. })));
     }
@@ -1551,15 +1665,32 @@ mod tests {
         let test_cases = vec![
             // Truncated after length prefix
             (vec![0x10, 0x00, 0x00, 0x00], "truncated after length"),
-            
             // Truncated after field type
-            (vec![0x10, 0x00, 0x00, 0x00, TYPE_STRING], "truncated after field type"),
-            
+            (
+                vec![0x10, 0x00, 0x00, 0x00, TYPE_STRING],
+                "truncated after field type",
+            ),
             // Truncated during field name
-            (vec![0x10, 0x00, 0x00, 0x00, TYPE_STRING, b'n', b'a'], "truncated during field name"),
-            
+            (
+                vec![0x10, 0x00, 0x00, 0x00, TYPE_STRING, b'n', b'a'],
+                "truncated during field name",
+            ),
             // Truncated after field name but before value
-            (vec![0x10, 0x00, 0x00, 0x00, TYPE_STRING, b'n', b'a', b'm', b'e', 0x00], "truncated before value"),
+            (
+                vec![
+                    0x10,
+                    0x00,
+                    0x00,
+                    0x00,
+                    TYPE_STRING,
+                    b'n',
+                    b'a',
+                    b'm',
+                    b'e',
+                    0x00,
+                ],
+                "truncated before value",
+            ),
         ];
 
         for (data, description) in test_cases {
@@ -1576,7 +1707,7 @@ mod tests {
         data.push(TYPE_STRING);
         data.extend_from_slice(b"field\0"); // Field name
         data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // -1 as i32 (negative length)
-        
+
         let result = deserialize_document(&data);
         // The document length validation might catch this first, so we'll accept any error
         assert!(result.is_err());
@@ -1592,7 +1723,7 @@ mod tests {
         data.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]); // String length 5
         data.extend_from_slice(b"test"); // String content without null terminator
         data.push(0x00); // Document null terminator
-        
+
         let result = deserialize_document(&data);
         // This should fail due to length mismatch
         assert!(result.is_err());
@@ -1602,9 +1733,9 @@ mod tests {
     #[test]
     fn test_error_handling_invalid_utf8_sequences() {
         let invalid_utf8_cases = vec![
-            vec![0xFF, 0xFE, 0x00], // Invalid UTF-8 sequence
-            vec![0xC0, 0xAF], // Overlong encoding
-            vec![0xE0, 0x80, 0x80], // Overlong encoding
+            vec![0xFF, 0xFE, 0x00],       // Invalid UTF-8 sequence
+            vec![0xC0, 0xAF],             // Overlong encoding
+            vec![0xE0, 0x80, 0x80],       // Overlong encoding
             vec![0xF0, 0x80, 0x80, 0x80], // Overlong encoding
         ];
 
@@ -1613,13 +1744,16 @@ mod tests {
             // Create a string with invalid UTF-8
             let invalid_string = String::from_utf8_lossy(invalid_bytes).into_owned();
             doc.set("test", Value::String(invalid_string));
-            
+
             let serialized = serialize_document(&doc).unwrap();
             let result = deserialize_document(&serialized);
-            
+
             // Should handle this gracefully or error appropriately
-            assert!(result.is_ok() || matches!(result, Err(BsonError::InvalidString)),
-                    "Failed for invalid UTF-8 case {}", i);
+            assert!(
+                result.is_ok() || matches!(result, Err(BsonError::InvalidString)),
+                "Failed for invalid UTF-8 case {}",
+                i
+            );
         }
     }
 
@@ -1633,7 +1767,7 @@ mod tests {
         data.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]); // String length 5
         data.extend_from_slice(b"test\0"); // String content
         data.push(0x00); // Null terminator
-        
+
         let result = deserialize_document(&data);
         // The document length validation might catch this first, so we'll accept any error
         assert!(result.is_err());
@@ -1646,10 +1780,10 @@ mod tests {
         let long_field_name = "a".repeat(1025);
         let mut doc = Document::new();
         doc.set(&long_field_name, Value::String("test".to_string()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let result = deserialize_document(&serialized);
-        
+
         // Should fail due to field name being too long
         assert!(matches!(result, Err(BsonError::MissingNullTerminator)));
     }
@@ -1662,7 +1796,7 @@ mod tests {
         data.push(TYPE_BINARY);
         data.extend_from_slice(b"field\0"); // Field name
         data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // -1 as i32 (negative length)
-        
+
         let result = deserialize_document(&data);
         // The document length validation might catch this first, so we'll accept any error
         assert!(result.is_err());
@@ -1673,12 +1807,12 @@ mod tests {
     fn test_error_handling_invalid_timestamps() {
         // Test timestamp that's out of range for chrono
         let invalid_timestamp = i64::MAX; // This is likely too large for chrono
-        
+
         let mut data = vec![0x10, 0x00, 0x00, 0x00]; // Document length
         data.push(TYPE_DATETIME);
         data.extend_from_slice(b"field\0"); // Field name
         data.extend_from_slice(&invalid_timestamp.to_le_bytes()); // Invalid timestamp
-        
+
         let result = deserialize_document(&data);
         // The document length validation might catch this first, so we'll accept any error
         assert!(result.is_err());
@@ -1694,7 +1828,7 @@ mod tests {
             data.push(unknown_type);
             data.extend_from_slice(b"field\0"); // Field name
             data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Some data
-            
+
             let result = deserialize_document(&data);
             // The document length validation might catch this first, so we'll accept any error
             assert!(result.is_err());
@@ -1718,24 +1852,35 @@ mod tests {
             (Value::I64(-123456789), TYPE_INT64, "int64_negative"),
             (Value::F64(3.14159), TYPE_DOUBLE, "double"),
             (Value::F64(-3.14159), TYPE_DOUBLE, "double_negative"),
-            (Value::String("Hello, World!".to_string()), TYPE_STRING, "string"),
+            (
+                Value::String("Hello, World!".to_string()),
+                TYPE_STRING,
+                "string",
+            ),
             (Value::ObjectId(ObjectId::new()), TYPE_OBJECTID, "objectid"),
             (Value::DateTime(Utc::now()), TYPE_DATETIME, "datetime"),
-            (Value::Binary(vec![0x01, 0x02, 0x03, 0x04]), TYPE_BINARY, "binary"),
+            (
+                Value::Binary(vec![0x01, 0x02, 0x03, 0x04]),
+                TYPE_BINARY,
+                "binary",
+            ),
         ];
 
         for (value, bson_type, name) in test_cases {
-            let encoded = encode_value(&value);
+            let encoded = encode_value(&value).unwrap();
             let (decoded, bytes_read) = decode_value(&encoded, bson_type).unwrap();
-            
+
             // Special handling for NaN and DateTime (which might have slight precision differences)
             match (&value, &decoded) {
                 (Value::F64(original), Value::F64(decoded)) => {
                     if original.is_nan() {
                         assert!(decoded.is_nan(), "NaN test failed for {}", name);
                     } else {
-                        assert!((original - decoded).abs() < f64::EPSILON, 
-                                "Double precision test failed for {}", name);
+                        assert!(
+                            (original - decoded).abs() < f64::EPSILON,
+                            "Double precision test failed for {}",
+                            name
+                        );
                     }
                 }
                 (Value::DateTime(original), Value::DateTime(decoded)) => {
@@ -1747,8 +1892,13 @@ mod tests {
                     assert_eq!(decoded, value, "Test failed for {}", name);
                 }
             }
-            
-            assert_eq!(bytes_read, encoded.len(), "Bytes read mismatch for {}", name);
+
+            assert_eq!(
+                bytes_read,
+                encoded.len(),
+                "Bytes read mismatch for {}",
+                name
+            );
         }
     }
 
@@ -1758,12 +1908,44 @@ mod tests {
         let insufficient_data_cases = vec![
             (vec![], TYPE_INT32, 4, "empty data for int32"),
             (vec![0x01, 0x02], TYPE_INT32, 4, "partial data for int32"),
-            (vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07], TYPE_INT64, 8, "partial data for int64"),
-            (vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07], TYPE_DOUBLE, 8, "partial data for double"),
-            (vec![0x01, 0x00, 0x00, 0x00], TYPE_STRING, 1, "partial data for string length"),
-            (vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B], TYPE_OBJECTID, 12, "partial data for objectid"),
-            (vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07], TYPE_DATETIME, 8, "partial data for datetime"),
-            (vec![0x01, 0x00, 0x00, 0x00], TYPE_BINARY, 2, "partial data for binary length"),
+            (
+                vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07],
+                TYPE_INT64,
+                8,
+                "partial data for int64",
+            ),
+            (
+                vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07],
+                TYPE_DOUBLE,
+                8,
+                "partial data for double",
+            ),
+            (
+                vec![0x01, 0x00, 0x00, 0x00],
+                TYPE_STRING,
+                1,
+                "partial data for string length",
+            ),
+            (
+                vec![
+                    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+                ],
+                TYPE_OBJECTID,
+                12,
+                "partial data for objectid",
+            ),
+            (
+                vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07],
+                TYPE_DATETIME,
+                8,
+                "partial data for datetime",
+            ),
+            (
+                vec![0x01, 0x00, 0x00, 0x00],
+                TYPE_BINARY,
+                2,
+                "partial data for binary length",
+            ),
         ];
 
         for (data, bson_type, expected_bytes, description) in insufficient_data_cases {
@@ -1777,7 +1959,10 @@ mod tests {
                             println!("  Expected: {}, Actual: {}", expected, actual);
                             assert_eq!(expected, expected_bytes, "Failed for {}", description);
                         }
-                        _ => panic!("Expected UnexpectedEndOfData for {}, got {:?}", description, e),
+                        _ => panic!(
+                            "Expected UnexpectedEndOfData for {}, got {:?}",
+                            description, e
+                        ),
                     }
                 }
             }
@@ -1807,16 +1992,16 @@ mod tests {
         // Create a document that's exactly at the 16MB limit
         let max_size = 16 * 1024 * 1024;
         let mut doc = Document::new();
-        
+
         // Add a large string that gets us close to the limit
         let large_string = "A".repeat(max_size - 1000); // Leave some room for overhead
         doc.set("large_field", Value::String(large_string));
-        
+
         let serialized = serialize_document(&doc).unwrap();
-        
+
         // Should be close to but not over the limit
         assert!(serialized.len() <= max_size);
-        
+
         // Should deserialize successfully
         let deserialized = deserialize_document(&serialized).unwrap();
         assert!(deserialized.get("large_field").is_some());
@@ -1828,11 +2013,11 @@ mod tests {
         // This test might be expensive, so we'll test with a smaller but still large document
         // In practice, you'd want to test the actual 16MB limit
         let large_size = 1024 * 1024; // 1MB for testing purposes
-        
+
         let mut doc = Document::new();
         let large_string = "A".repeat(large_size);
         doc.set("large_field", Value::String(large_string));
-        
+
         // This should still work (under 16MB)
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
@@ -1843,7 +2028,7 @@ mod tests {
     #[test]
     fn test_large_document_performance() {
         let mut doc = Document::new();
-        
+
         // Add 1000 fields with different types
         for i in 0..1000 {
             let field_name = format!("field_{}", i);
@@ -1857,23 +2042,31 @@ mod tests {
             };
             doc.set(&field_name, value);
         }
-        
+
         // Measure serialization time
         let start = std::time::Instant::now();
         let serialized = serialize_document(&doc).unwrap();
         let serialize_time = start.elapsed();
-        
+
         // Measure deserialization time
         let start = std::time::Instant::now();
         let deserialized = deserialize_document(&serialized).unwrap();
         let deserialize_time = start.elapsed();
-        
+
         // Verify the result
         assert_eq!(deserialized.data.len(), 1000);
-        
+
         // Performance assertions (adjust thresholds as needed)
-        assert!(serialize_time.as_millis() < 100, "Serialization took too long: {:?}", serialize_time);
-        assert!(deserialize_time.as_millis() < 100, "Deserialization took too long: {:?}", deserialize_time);
+        assert!(
+            serialize_time.as_millis() < 100,
+            "Serialization took too long: {:?}",
+            serialize_time
+        );
+        assert!(
+            deserialize_time.as_millis() < 100,
+            "Deserialization took too long: {:?}",
+            deserialize_time
+        );
     }
 
     // ============================================================================
@@ -1884,7 +2077,7 @@ mod tests {
     #[test]
     fn test_complex_document_all_types() {
         let mut doc = Document::new();
-        
+
         // Add all BSON types in one document
         doc.set("null_field", Value::Null);
         doc.set("bool_true", Value::Bool(true));
@@ -1895,14 +2088,17 @@ mod tests {
         doc.set("string_field", Value::String("Hello, BSON!".to_string()));
         doc.set("objectid_field", Value::ObjectId(ObjectId::new()));
         doc.set("datetime_field", Value::DateTime(Utc::now()));
-        doc.set("binary_field", Value::Binary(vec![0x01, 0x02, 0x03, 0x04, 0x05]));
-        
+        doc.set(
+            "binary_field",
+            Value::Binary(vec![0x01, 0x02, 0x03, 0x04, 0x05]),
+        );
+
         // Add nested objects and arrays
         let mut nested_obj = Document::new();
         nested_obj.set("nested_string", Value::String("nested".to_string()));
         nested_obj.set("nested_number", Value::I32(123));
         doc.set("object_field", Value::Object(nested_obj.data));
-        
+
         let array = vec![
             Value::String("array_item_1".to_string()),
             Value::I32(456),
@@ -1910,31 +2106,49 @@ mod tests {
             Value::F64(2.718),
         ];
         doc.set("array_field", Value::Array(array));
-        
+
         // Serialize and deserialize
         let serialized = serialize_document(&doc).unwrap();
         let deserialized = deserialize_document(&serialized).unwrap();
-        
+
         // Verify all fields
         assert_eq!(deserialized.get("null_field"), Some(&Value::Null));
         assert_eq!(deserialized.get("bool_true"), Some(&Value::Bool(true)));
         assert_eq!(deserialized.get("bool_false"), Some(&Value::Bool(false)));
         assert_eq!(deserialized.get("int32_field"), Some(&Value::I32(42)));
-        assert_eq!(deserialized.get("int64_field"), Some(&Value::I64(1234567890123456789)));
+        assert_eq!(
+            deserialized.get("int64_field"),
+            Some(&Value::I64(1234567890123456789))
+        );
         assert_eq!(deserialized.get("double_field"), Some(&Value::F64(3.14159)));
-        assert_eq!(deserialized.get("string_field"), Some(&Value::String("Hello, BSON!".to_string())));
-        assert!(matches!(deserialized.get("objectid_field"), Some(Value::ObjectId(_))));
-        assert!(matches!(deserialized.get("datetime_field"), Some(Value::DateTime(_))));
-        assert_eq!(deserialized.get("binary_field"), Some(&Value::Binary(vec![0x01, 0x02, 0x03, 0x04, 0x05])));
-        
+        assert_eq!(
+            deserialized.get("string_field"),
+            Some(&Value::String("Hello, BSON!".to_string()))
+        );
+        assert!(matches!(
+            deserialized.get("objectid_field"),
+            Some(Value::ObjectId(_))
+        ));
+        assert!(matches!(
+            deserialized.get("datetime_field"),
+            Some(Value::DateTime(_))
+        ));
+        assert_eq!(
+            deserialized.get("binary_field"),
+            Some(&Value::Binary(vec![0x01, 0x02, 0x03, 0x04, 0x05]))
+        );
+
         // Verify nested object
         if let Some(Value::Object(nested_data)) = deserialized.get("object_field") {
-            assert_eq!(nested_data.get("nested_string"), Some(&Value::String("nested".to_string())));
+            assert_eq!(
+                nested_data.get("nested_string"),
+                Some(&Value::String("nested".to_string()))
+            );
             assert_eq!(nested_data.get("nested_number"), Some(&Value::I32(123)));
         } else {
             panic!("Expected nested object");
         }
-        
+
         // Verify array
         if let Some(Value::Array(array_data)) = deserialized.get("array_field") {
             assert_eq!(array_data.len(), 4);
@@ -1958,13 +2172,16 @@ mod tests {
         doc.set("name", Value::String("Alice".to_string()));
         doc.set("age", Value::I32(25));
         doc.set("active", Value::Bool(true));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(serialized));
-        
+
         let decoded = decoder.decode_document().unwrap();
-        
-        assert_eq!(decoded.get("name"), Some(&Value::String("Alice".to_string())));
+
+        assert_eq!(
+            decoded.get("name"),
+            Some(&Value::String("Alice".to_string()))
+        );
         assert_eq!(decoded.get("age"), Some(&Value::I32(25)));
         assert_eq!(decoded.get("active"), Some(&Value::Bool(true)));
         assert!(decoder.bytes_read() > 0);
@@ -1975,14 +2192,14 @@ mod tests {
     fn test_bson_decoder_memory_limit() {
         let mut doc = Document::new();
         doc.set("large_field", Value::String("A".repeat(1024))); // 1KB string
-        
+
         let serialized = serialize_document(&doc).unwrap();
-        
+
         // Test with memory limit larger than document
         let mut decoder = BsonDecoder::with_memory_limit(Cursor::new(&serialized), 2048);
         let result = decoder.decode_document();
         assert!(result.is_ok());
-        
+
         // Test with memory limit smaller than document
         let mut decoder = BsonDecoder::with_memory_limit(Cursor::new(&serialized), 100);
         let result = decoder.decode_document();
@@ -1995,18 +2212,22 @@ mod tests {
         let mut doc = Document::new();
         doc.set("field1", Value::String("Hello".to_string()));
         doc.set("field2", Value::I32(42));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let progress_calls = Arc::new(Mutex::new(Vec::new()));
         let progress_calls_clone = Arc::clone(&progress_calls);
-        
-        let mut decoder = BsonDecoder::new(Cursor::new(&serialized))
-            .with_progress_callback(move |bytes_read, total_bytes| {
-                progress_calls_clone.lock().unwrap().push((bytes_read, total_bytes));
-            });
-        
+
+        let mut decoder = BsonDecoder::new(Cursor::new(&serialized)).with_progress_callback(
+            move |bytes_read, total_bytes| {
+                progress_calls_clone
+                    .lock()
+                    .unwrap()
+                    .push((bytes_read, total_bytes));
+            },
+        );
+
         let _decoded = decoder.decode_document().unwrap();
-        
+
         // Should have received progress updates
         let calls = progress_calls.lock().unwrap();
         assert!(!calls.is_empty());
@@ -2019,38 +2240,44 @@ mod tests {
         let mut doc1 = Document::new();
         doc1.set("id", Value::I32(1));
         doc1.set("name", Value::String("Alice".to_string()));
-        
+
         let mut doc2 = Document::new();
         doc2.set("id", Value::I32(2));
         doc2.set("name", Value::String("Bob".to_string()));
-        
+
         let serialized1 = serialize_document(&doc1).unwrap();
         let serialized2 = serialize_document(&doc2).unwrap();
-        
+
         // Combine documents
         let mut combined = Vec::new();
         combined.extend_from_slice(&serialized1);
         combined.extend_from_slice(&serialized2);
-        
+
         let mut decoder = BsonDecoder::new(Cursor::new(&combined));
         let documents: Vec<Result<Document, BsonError>> = decoder.decode_documents().collect();
-        
+
         assert_eq!(documents.len(), 2);
-        
+
         let decoded1 = documents[0].as_ref().unwrap();
         let decoded2 = documents[1].as_ref().unwrap();
-        
+
         assert_eq!(decoded1.get("id"), Some(&Value::I32(1)));
-        assert_eq!(decoded1.get("name"), Some(&Value::String("Alice".to_string())));
+        assert_eq!(
+            decoded1.get("name"),
+            Some(&Value::String("Alice".to_string()))
+        );
         assert_eq!(decoded2.get("id"), Some(&Value::I32(2)));
-        assert_eq!(decoded2.get("name"), Some(&Value::String("Bob".to_string())));
+        assert_eq!(
+            decoded2.get("name"),
+            Some(&Value::String("Bob".to_string()))
+        );
     }
 
     /// Test BsonDecoder with large document streaming
     #[test]
     fn test_bson_decoder_large_document_streaming() {
         let mut doc = Document::new();
-        
+
         // Create a large document with many fields
         for i in 0..1000 {
             let field_name = format!("field_{}", i);
@@ -2064,15 +2291,18 @@ mod tests {
             };
             doc.set(&field_name, value);
         }
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
-        
+
         let decoded = decoder.decode_document().unwrap();
-        
+
         // Data should have 1000 fields (not counting the _id which is separate)
         assert_eq!(decoded.data.len(), 1000);
-        assert_eq!(decoded.get("field_0"), Some(&Value::String("string_0".to_string())));
+        assert_eq!(
+            decoded.get("field_0"),
+            Some(&Value::String("string_0".to_string()))
+        );
         assert_eq!(decoded.get("field_1"), Some(&Value::I32(1)));
         assert!(matches!(decoded.get("field_999"), Some(Value::ObjectId(_))));
     }
@@ -2082,13 +2312,13 @@ mod tests {
     fn test_bson_decoder_truncated_data() {
         let mut doc = Document::new();
         doc.set("name", Value::String("Alice".to_string()));
-        
+
         let mut serialized = serialize_document(&doc).unwrap();
         serialized.truncate(serialized.len() - 5); // Remove last 5 bytes
-        
+
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
         let result = decoder.decode_document();
-        
+
         assert!(result.is_err());
     }
 
@@ -2097,8 +2327,14 @@ mod tests {
     fn test_bson_decoder_empty_data() {
         let mut decoder = BsonDecoder::new(Cursor::new(&[]));
         let result = decoder.decode_document();
-        
-        assert!(matches!(result, Err(BsonError::UnexpectedEndOfData { expected: 4, actual: 0 })));
+
+        assert!(matches!(
+            result,
+            Err(BsonError::UnexpectedEndOfData {
+                expected: 4,
+                actual: 0
+            })
+        ));
     }
 
     /// Test BsonDecoder with invalid document length
@@ -2107,10 +2343,10 @@ mod tests {
         // Create data with invalid length prefix
         let mut data = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Very large length
         data.extend_from_slice(b"some data");
-        
+
         let mut decoder = BsonDecoder::new(Cursor::new(&data));
         let result = decoder.decode_document();
-        
+
         assert!(matches!(result, Err(BsonError::DocumentTooLarge(_))));
     }
 
@@ -2119,13 +2355,13 @@ mod tests {
     fn test_bson_decoder_very_small_memory_limit() {
         let mut doc = Document::new();
         doc.set("field", Value::String("test".to_string()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
-        
+
         // Set memory limit to 1 byte (impossible to decode)
         let mut decoder = BsonDecoder::with_memory_limit(Cursor::new(&serialized), 1);
         let result = decoder.decode_document();
-        
+
         assert!(matches!(result, Err(BsonError::DocumentTooLarge(_))));
     }
 
@@ -2134,13 +2370,13 @@ mod tests {
     fn test_bson_decoder_bytes_read_tracking() {
         let mut doc = Document::new();
         doc.set("field", Value::String("test".to_string()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
-        
+
         // Before decoding
         assert_eq!(decoder.bytes_read(), 0);
-        
+
         // After decoding
         let _decoded = decoder.decode_document().unwrap();
         assert_eq!(decoder.bytes_read(), serialized.len());
@@ -2159,21 +2395,27 @@ mod tests {
         doc.set("objectid", Value::ObjectId(ObjectId::new()));
         doc.set("datetime", Value::DateTime(Utc::now()));
         doc.set("binary", Value::Binary(vec![0x01, 0x02, 0x03]));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
-        
+
         let decoded = decoder.decode_document().unwrap();
-        
+
         assert_eq!(decoded.get("null"), Some(&Value::Null));
         assert_eq!(decoded.get("bool"), Some(&Value::Bool(true)));
         assert_eq!(decoded.get("int32"), Some(&Value::I32(42)));
         assert_eq!(decoded.get("int64"), Some(&Value::I64(123456789)));
         assert_eq!(decoded.get("double"), Some(&Value::F64(3.14159)));
-        assert_eq!(decoded.get("string"), Some(&Value::String("Hello".to_string())));
+        assert_eq!(
+            decoded.get("string"),
+            Some(&Value::String("Hello".to_string()))
+        );
         assert!(matches!(decoded.get("objectid"), Some(Value::ObjectId(_))));
         assert!(matches!(decoded.get("datetime"), Some(Value::DateTime(_))));
-        assert_eq!(decoded.get("binary"), Some(&Value::Binary(vec![0x01, 0x02, 0x03])));
+        assert_eq!(
+            decoded.get("binary"),
+            Some(&Value::Binary(vec![0x01, 0x02, 0x03]))
+        );
     }
 
     // ============================================================================
@@ -2188,14 +2430,17 @@ mod tests {
         doc.set("age", Value::I32(25));
         doc.set("email", Value::String("alice@example.com".to_string()));
         doc.set("address", Value::String("123 Main St".to_string()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
-        
+
         // Decode only specific fields
         let partial = decoder.decode_partial_document(&["name", "age"]).unwrap();
-        
-        assert_eq!(partial.get("name"), Some(&Value::String("Alice".to_string())));
+
+        assert_eq!(
+            partial.get("name"),
+            Some(&Value::String("Alice".to_string()))
+        );
         assert_eq!(partial.get("age"), Some(&Value::I32(25)));
         assert_eq!(partial.get("email"), None); // Should not be present
         assert_eq!(partial.get("address"), None); // Should not be present
@@ -2208,10 +2453,10 @@ mod tests {
         let mut doc = Document::new();
         doc.set("name", Value::String("Alice".to_string()));
         doc.set("age", Value::I32(25));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
-        
+
         // Try to decode a field that doesn't exist
         let result = decoder.decode_partial_document(&["name", "nonexistent"]);
         assert!(matches!(result, Err(BsonError::FieldNotFound(_))));
@@ -2224,12 +2469,12 @@ mod tests {
         doc.set("name", Value::String("Alice".to_string()));
         doc.set("age", Value::I32(25));
         doc.set("email", Value::String("alice@example.com".to_string()));
-        
+
         let serialized = serialize_document(&doc).unwrap();
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
-        
+
         let field_names = decoder.get_field_names().unwrap();
-        
+
         // Now includes the _id field plus the 3 data fields
         assert_eq!(field_names.len(), 4);
         assert!(field_names.contains(&"_id".to_string()));
@@ -2244,18 +2489,22 @@ mod tests {
         let mut doc = Document::new();
         doc.set("field1", Value::String("Hello".to_string()));
         doc.set("field2", Value::I32(42));
-        
+
         let mut buffer = Vec::new();
         let progress_calls = Arc::new(Mutex::new(Vec::new()));
         let progress_calls_clone = Arc::clone(&progress_calls);
-        
-        let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer))
-            .with_progress_callback(move |bytes_written, total_bytes| {
-                progress_calls_clone.lock().unwrap().push((bytes_written, total_bytes));
-            });
-        
+
+        let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer)).with_progress_callback(
+            move |bytes_written, total_bytes| {
+                progress_calls_clone
+                    .lock()
+                    .unwrap()
+                    .push((bytes_written, total_bytes));
+            },
+        );
+
         encoder.encode_document(&doc).unwrap();
-        
+
         // Should have received progress updates
         let calls = progress_calls.lock().unwrap();
         assert!(!calls.is_empty());
@@ -2267,14 +2516,14 @@ mod tests {
     fn test_bson_encoder_memory_limit() {
         let mut doc = Document::new();
         doc.set("large_field", Value::String("A".repeat(1024))); // 1KB string
-        
+
         let mut buffer = Vec::new();
-        
+
         // Test with memory limit larger than document
         let mut encoder = BsonEncoder::with_memory_limit(Cursor::new(&mut buffer), 2048);
         let result = encoder.encode_document(&doc);
         assert!(result.is_ok());
-        
+
         // Test with memory limit smaller than document
         let mut buffer2 = Vec::new();
         let mut encoder2 = BsonEncoder::with_memory_limit(Cursor::new(&mut buffer2), 100);
@@ -2290,18 +2539,23 @@ mod tests {
         doc.set("age", Value::I32(25));
         doc.set("email", Value::String("alice@example.com".to_string()));
         doc.set("address", Value::String("123 Main St".to_string()));
-        
+
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
-        
+
         // Encode only specific fields
-        encoder.encode_partial_document(&doc, &["name", "age"]).unwrap();
-        
+        encoder
+            .encode_partial_document(&doc, &["name", "age"])
+            .unwrap();
+
         // Decode and verify only requested fields are present
         let mut decoder = BsonDecoder::new(Cursor::new(&buffer));
         let decoded = decoder.decode_document().unwrap();
-        
-        assert_eq!(decoded.get("name"), Some(&Value::String("Alice".to_string())));
+
+        assert_eq!(
+            decoded.get("name"),
+            Some(&Value::String("Alice".to_string()))
+        );
         assert_eq!(decoded.get("age"), Some(&Value::I32(25)));
         assert_eq!(decoded.get("email"), None);
         assert_eq!(decoded.get("address"), None);
@@ -2313,10 +2567,10 @@ mod tests {
     fn test_partial_document_encoding_missing_field() {
         let mut doc = Document::new();
         doc.set("name", Value::String("Alice".to_string()));
-        
+
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
-        
+
         // Try to encode a field that doesn't exist
         let result = encoder.encode_partial_document(&doc, &["name", "nonexistent"]);
         assert!(matches!(result, Err(BsonError::FieldNotFound(_))));
@@ -2326,21 +2580,21 @@ mod tests {
     #[test]
     fn test_memory_efficient_array_encoding() {
         let mut doc = Document::new();
-        
+
         // Create a large array
         let large_array: Vec<Value> = (0..1000).map(|i| Value::I32(i)).collect();
         doc.set("large_array", Value::Array(large_array));
-        
+
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
-        
+
         // This should work without loading the entire array into memory
         encoder.encode_document(&doc).unwrap();
-        
+
         // Verify the encoded data
         let mut decoder = BsonDecoder::new(Cursor::new(&buffer));
         let decoded = decoder.decode_document().unwrap();
-        
+
         if let Some(Value::Array(decoded_array)) = decoded.get("large_array") {
             assert_eq!(decoded_array.len(), 1000);
             assert_eq!(decoded_array[0], Value::I32(0));
@@ -2354,14 +2608,14 @@ mod tests {
     #[test]
     fn test_array_size_limits() {
         let mut doc = Document::new();
-        
+
         // Create an array that's too large (over 1M elements)
         let too_large_array: Vec<Value> = (0..1_100_000).map(|i| Value::I32(i)).collect();
         doc.set("too_large_array", Value::Array(too_large_array));
-        
+
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
-        
+
         // This should fail due to array size limit
         let result = encoder.encode_document(&doc);
         assert!(matches!(result, Err(BsonError::ArrayTooLarge(_))));
@@ -2371,10 +2625,11 @@ mod tests {
     #[test]
     fn test_nesting_depth_limits() {
         let mut doc = Document::new();
-        
+
         // Create a deeply nested structure by building it from the inside out
         let mut current_data = BTreeMap::new();
-        for i in (0..150).rev() { // Build from deepest to shallowest
+        for i in (0..150).rev() {
+            // Build from deepest to shallowest
             let mut nested_data = BTreeMap::new();
             nested_data.insert("value".to_string(), Value::I32(i));
             if i < 149 {
@@ -2383,10 +2638,10 @@ mod tests {
             current_data = nested_data;
         }
         doc.set("nested", Value::Object(current_data));
-        
+
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
-        
+
         // This should fail due to nesting depth limit
         let result = encoder.encode_document(&doc);
         assert!(matches!(result, Err(BsonError::NestedDocumentTooDeep)));
@@ -2396,23 +2651,23 @@ mod tests {
     #[test]
     fn test_streaming_large_documents_over_1mb() {
         let mut doc = Document::new();
-        
+
         // Create a document that's over 1MB
         let large_string = "A".repeat(1024 * 1024); // 1MB string
         doc.set("large_field", Value::String(large_string));
-        
+
         // Test encoding
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
         encoder.encode_document(&doc).unwrap();
-        
+
         // Verify the encoded data is over 1MB
         assert!(buffer.len() > 1024 * 1024);
-        
+
         // Test decoding
         let mut decoder = BsonDecoder::new(Cursor::new(&buffer));
         let decoded = decoder.decode_document().unwrap();
-        
+
         if let Some(Value::String(decoded_string)) = decoded.get("large_field") {
             assert_eq!(decoded_string.len(), 1024 * 1024);
             assert!(decoded_string.chars().all(|c| c == 'A'));
@@ -2425,7 +2680,7 @@ mod tests {
     #[test]
     fn test_streaming_multiple_large_documents() {
         let mut documents = Vec::new();
-        
+
         // Create multiple large documents
         for i in 0..5 {
             let mut doc = Document::new();
@@ -2433,24 +2688,24 @@ mod tests {
             doc.set("large_field", Value::String("A".repeat(100 * 1024))); // 100KB each
             documents.push(doc);
         }
-        
+
         // Encode all documents using serialize_document and append to buffer
         let mut buffer = Vec::new();
         for doc in &documents {
             let encoded = serialize_document(doc).unwrap();
             buffer.extend_from_slice(&encoded);
         }
-        
+
         // Decode all documents
         let mut decoder = BsonDecoder::new(Cursor::new(&buffer));
         let decoded_docs: Vec<Result<Document, BsonError>> = decoder.decode_documents().collect();
-        
+
         assert_eq!(decoded_docs.len(), 5);
-        
+
         for (i, result) in decoded_docs.iter().enumerate() {
             let doc = result.as_ref().unwrap();
             assert_eq!(doc.get("id"), Some(&Value::I32(i as i32)));
-            
+
             if let Some(Value::String(large_string)) = doc.get("large_field") {
                 assert_eq!(large_string.len(), 100 * 1024);
             } else {
@@ -2463,30 +2718,34 @@ mod tests {
     #[test]
     fn test_memory_efficient_nested_objects() {
         let mut doc = Document::new();
-        
+
         // Create a deeply nested object structure by building from inside out
         let mut current_data = BTreeMap::new();
-        for i in (0..10).rev() { // Build from deepest to shallowest
+        for i in (0..10).rev() {
+            // Build from deepest to shallowest
             let mut nested_data = BTreeMap::new();
             nested_data.insert("value".to_string(), Value::I32(i));
-            nested_data.insert("array".to_string(), Value::Array((0..100).map(|j| Value::I32(j)).collect()));
+            nested_data.insert(
+                "array".to_string(),
+                Value::Array((0..100).map(|j| Value::I32(j)).collect()),
+            );
             if i < 9 {
                 nested_data.insert("nested".to_string(), Value::Object(current_data));
             }
             current_data = nested_data;
         }
         doc.set("nested", Value::Object(current_data));
-        
+
         let mut buffer = Vec::new();
         let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer));
-        
+
         // This should work with memory-efficient encoding
         encoder.encode_document(&doc).unwrap();
-        
+
         // Verify the encoded data
         let mut decoder = BsonDecoder::new(Cursor::new(&buffer));
         let decoded = decoder.decode_document().unwrap();
-        
+
         // Navigate through the nested structure
         let mut current_decoded = decoded.clone();
         for i in 0..10 {
@@ -2496,7 +2755,10 @@ mod tests {
                     assert_eq!(array.len(), 100);
                 }
                 // Move to the next nested object by value
-                current_decoded = Document { data: nested_data.clone(), id: Value::ObjectId(ObjectId::new()) };
+                current_decoded = Document {
+                    data: nested_data.clone(),
+                    id: Value::ObjectId(ObjectId::new()),
+                };
             } else {
                 panic!("Expected nested object");
             }
@@ -2507,30 +2769,34 @@ mod tests {
     #[test]
     fn test_progress_callbacks_large_encoding() {
         let mut doc = Document::new();
-        
+
         // Create a large document
         for i in 0..1000 {
             let field_name = format!("field_{}", i);
             let value = Value::String(format!("value_{}", i));
             doc.set(&field_name, value);
         }
-        
+
         let mut buffer = Vec::new();
         let progress_calls = Arc::new(Mutex::new(Vec::new()));
         let progress_calls_clone = Arc::clone(&progress_calls);
-        
-        let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer))
-            .with_progress_callback(move |bytes_written, total_bytes| {
-                progress_calls_clone.lock().unwrap().push((bytes_written, total_bytes));
-            });
-        
+
+        let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer)).with_progress_callback(
+            move |bytes_written, total_bytes| {
+                progress_calls_clone
+                    .lock()
+                    .unwrap()
+                    .push((bytes_written, total_bytes));
+            },
+        );
+
         encoder.encode_document(&doc).unwrap();
-        
+
         // Should have received multiple progress updates
         let calls = progress_calls.lock().unwrap();
         assert!(!calls.is_empty());
         assert!(calls.len() > 1); // Multiple progress updates
-        
+
         // Verify final bytes written
         assert!(encoder.bytes_written() > 0);
     }
@@ -2539,47 +2805,56 @@ mod tests {
     #[test]
     fn test_lazy_decoding_large_documents() {
         let mut doc = Document::new();
-        
+
         // Create a large document with many fields
         for i in 0..1000 {
             let field_name = format!("field_{}", i);
             let value = Value::String(format!("value_{}", i));
             doc.set(&field_name, value);
         }
-        
+
         let serialized = serialize_document(&doc).unwrap();
-        
-        // Test getting field names without decoding values  
+
+        // Test getting field names without decoding values
         let mut decoder = BsonDecoder::new(Cursor::new(&serialized));
         let field_names = decoder.get_field_names().unwrap();
-        
+
         // Now includes _id field plus the 1000 data fields
         assert_eq!(field_names.len(), 1001);
         assert!(field_names.contains(&"_id".to_string()));
         assert!(field_names.contains(&"field_0".to_string()));
         assert!(field_names.contains(&"field_999".to_string()));
-        
+
         // Test partial decoding of specific fields
         let mut decoder2 = BsonDecoder::new(Cursor::new(&serialized));
-        let partial = decoder2.decode_partial_document(&["field_0", "field_999"]).unwrap();
-        
+        let partial = decoder2
+            .decode_partial_document(&["field_0", "field_999"])
+            .unwrap();
+
         assert_eq!(partial.data.len(), 2);
-        assert_eq!(partial.get("field_0"), Some(&Value::String("value_0".to_string())));
-        assert_eq!(partial.get("field_999"), Some(&Value::String("value_999".to_string())));
+        assert_eq!(
+            partial.get("field_0"),
+            Some(&Value::String("value_0".to_string()))
+        );
+        assert_eq!(
+            partial.get("field_999"),
+            Some(&Value::String("value_999".to_string()))
+        );
     }
 
     /// Test error handling for oversized documents during encoding
     #[test]
     fn test_oversized_document_encoding_error() {
         let mut doc = Document::new();
-        
+
         // Create a document that's too large for the memory limit
         let large_string = "A".repeat(20 * 1024 * 1024); // 20MB string
         doc.set("huge_field", Value::String(large_string));
-        
+
         let mut buffer = Vec::new();
-        let mut encoder = BsonEncoder::with_memory_limit(Cursor::new(&mut buffer), 16 * 1024 * 1024); // 16MB limit
-        
+        let mut encoder =
+            BsonEncoder::with_memory_limit(Cursor::new(&mut buffer), 16 * 1024 * 1024); // 16MB limit
+
         // This should fail due to document size validation
         let result = encoder.encode_document(&doc);
         assert!(matches!(result, Err(BsonError::DocumentTooLarge(_))));
@@ -2589,10 +2864,11 @@ mod tests {
     #[test]
     fn test_custom_nesting_depth_limits() {
         let mut doc = Document::new();
-        
+
         // Create a moderately nested structure by building from inside out
         let mut current_data = BTreeMap::new();
-        for i in (0..50).rev() { // Build from deepest to shallowest
+        for i in (0..50).rev() {
+            // Build from deepest to shallowest
             let mut nested_data = BTreeMap::new();
             nested_data.insert("value".to_string(), Value::I32(i));
             if i < 49 {
@@ -2601,21 +2877,19 @@ mod tests {
             current_data = nested_data;
         }
         doc.set("nested", Value::Object(current_data));
-        
+
         let mut buffer = Vec::new();
-        
+
         // Test with custom depth limit that's too low
-        let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer))
-            .with_max_nesting_depth(25);
-        
+        let mut encoder = BsonEncoder::new(Cursor::new(&mut buffer)).with_max_nesting_depth(25);
+
         let result = encoder.encode_document(&doc);
         assert!(matches!(result, Err(BsonError::NestedDocumentTooDeep)));
-        
+
         // Test with custom depth limit that's sufficient
         let mut buffer2 = Vec::new();
-        let mut encoder2 = BsonEncoder::new(Cursor::new(&mut buffer2))
-            .with_max_nesting_depth(100);
-        
+        let mut encoder2 = BsonEncoder::new(Cursor::new(&mut buffer2)).with_max_nesting_depth(100);
+
         let result2 = encoder2.encode_document(&doc);
         assert!(result2.is_ok());
     }
