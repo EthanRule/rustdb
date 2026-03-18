@@ -183,6 +183,17 @@ impl StorageEngine {
 
         Ok(())
     }
+    
+    pub fn vacuum(&mut self) -> Result<usize> {
+        let page_ids = self.buffer_pool.get_all_page_ids();
+        for page_id in page_ids {
+            let page = self.buffer_pool.pin_page(page_id, &mut self.database_file);
+            PageLayout::compact_page(&mut page);
+            buffer_pool.unpin_page(poge_id, true);
+        }
+        
+        Ok(())
+    }
 
     // Helper function to avoid code duplication
     fn insert_document_internal(&mut self, document_bytes: &[u8]) -> Result<DocumentId> {

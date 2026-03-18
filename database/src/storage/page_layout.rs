@@ -36,7 +36,7 @@ impl SlotEntry {
             offset: 0,
             length: TOMBSTONE_MARKER,
         }
-}
+    }
 
     fn is_tombstone(&self) -> bool {
         self.length == TOMBSTONE_MARKER
@@ -72,7 +72,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Cannot insert empty document".to_string(),
             ));
-}
+        }
 
         let doc_size = document_bytes.len();
         if doc_size > u16::MAX as usize {
@@ -108,7 +108,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Insufficient space on page".to_string(),
             ));
-}
+        }
 
         // Find space for the document
         let doc_offset = Self::find_free_space_with_count(page, doc_size, final_slot_count)?;
@@ -155,7 +155,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Document has been deleted".to_string(),
             ));
-}
+        }
 
         if slot_entry.is_empty() {
             return Err(DatabaseError::Storage("Empty slot".to_string()));
@@ -178,7 +178,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Document already deleted".to_string(),
             ));
-}
+        }
 
         if slot_entry.is_empty() {
             return Err(DatabaseError::Storage("Empty slot".to_string()));
@@ -212,7 +212,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Document has been deleted".to_string(),
             ));
-}
+        }
 
         if slot_entry.is_empty() {
             return Err(DatabaseError::Storage("Empty slot".to_string()));
@@ -423,7 +423,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Insufficient contiguous space".to_string(),
             ));
-}
+        }
 
         Ok(max_offset)
     }
@@ -454,7 +454,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Insufficient contiguous space".to_string(),
             ));
-}
+        }
 
         Ok(max_offset)
     }
@@ -521,7 +521,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Invalid slot directory header".to_string(),
             ));
-}
+        }
 
         let slot_count = u16::from_le_bytes([header_bytes[0], header_bytes[1]]);
         let free_space_offset = u16::from_le_bytes([header_bytes[2], header_bytes[3]]);
@@ -530,7 +530,7 @@ impl PageLayout {
             slot_count,
             free_space_offset,
         })
-}
+    }
 
     fn write_slot_directory_header(
         page: &mut Page,
@@ -618,7 +618,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Invalid document bounds".to_string(),
             ));
-}
+        }
 
         Ok(data[start..end].to_vec())
     }
@@ -632,7 +632,7 @@ impl PageLayout {
             return Err(DatabaseError::Storage(
                 "Document exceeds page bounds".to_string(),
             ));
-}
+        }
 
         page_data[start..end].copy_from_slice(data);
         Ok(())
