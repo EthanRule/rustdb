@@ -4,14 +4,27 @@ use crate::{
         storage_engine::{StorageEngine, DocumentId},
         file::DatabaseFile,
     },
+    bson::{serialize_document, deserialize_document},
     Document, Value,
 };
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 #[derive(PartialEq)]
 enum ActiveTab {
     Insert,
     View,
+    Benchmarks,
+}
+
+#[derive(Clone)]
+struct BenchResult {
+    label: String,
+    micros: f64,
+}
+
+struct BenchGroup {
+    name: String,
+    results: Vec<BenchResult>,
 }
 
 pub struct DatabaseApp {
@@ -31,6 +44,10 @@ pub struct DatabaseApp {
     // Edit mode
     edit_mode: bool,
     edit_json: String,
+
+    // Benchmarks
+    bench_groups: Vec<BenchGroup>,
+    bench_iters: usize,
 }
 
 impl Default for DatabaseApp {
@@ -48,6 +65,8 @@ impl Default for DatabaseApp {
             active_tab: ActiveTab::Insert,
             edit_mode: false,
             edit_json: String::new(),
+            bench_groups: Vec::new(),
+            bench_iters: 500,
         }
     }
 }
@@ -235,6 +254,148 @@ impl DatabaseApp {
         }
     }
 
+    fn bench_doc(fields: usize) -> Document {
+        let mut doc = Document::new();
+        for i in 0..fields {
+            doc.set(format!("field_{}", i), Value::I32(i as i32));
+            doc.set(format!("str_{}", i), Value::String(format!("value_{}", i)));
+        }
+        doc
+    }
+
+    fn measure_us<F: FnMut()>(iters: usize, mut f: F) -> f64 {
+        let start = Instant::now();
+        for _ in 0..iters {
+            f();
+        }
+        start.elapsed().as_secs_f64() * 1_000_000.0 / iters as f64
+    }
+
+    fn run_benchmarks(&mut self) {
+        let iters = self.bench_iters;
+        let mut groups: Vec<BenchGroup> = Vec::new();
+
+        // ── BSON serialize ───────────────────────────────────────────────
+        let mut ser_results = Vec::new();
+        for &size in &[10usize, 100, 500, 1000] {
+            let doc = Self::bench_doc(size);
+            let us = Self::measure_us(iters, || { let _ = serialize_document(&doc); });
+            ser_results.push(BenchResult { label: format!("{} fields", size), micros: us });
+        }
+        groups.push(BenchGroup { name: "BSON Serialize (avg µs)".into(), results: ser_results });
+
+        // ── BSON deserialize ─────────────────────────────────────────────
+        let mut de_results = Vec::new();
+        for &size in &[10usize, 100, 500, 1000] {
+            let doc = Self::bench_doc(size);
+            let bytes = serialize_document(&doc).unwrap_or_default();
+            let us = Self::measure_us(iters, || { let _ = deserialize_document(&bytes); });
+            de_results.push(BenchResult { label: format!("{} fields", size), micros: us });
+        }
+        groups.push(BenchGroup { name: "BSON Deserialize (avg µs)".into(), results: de_results });
+
+        // ── Roundtrip ────────────────────────────────────────────────────
+        let mut rt_results = Vec::new();
+        for &size in &[10usize, 100, 500, 1000] {
+            let doc = Self::bench_doc(size);
+            let us = Self::measure_us(iters, || {
+                if let Ok(bytes) = serialize_document(&doc) {
+                    let _ = deserialize_document(&bytes);
+                }
+            });
+            rt_results.push(BenchResult { label: format!("{} fields", size), micros: us });
+        }
+        groups.push(BenchGroup { name: "Roundtrip Serialize+Deserialize (avg µs)".into(), results: rt_results });
+
+        // ── Storage engine (only if DB open) ─────────────────────────────
+        if self.storage_engine.is_some() {
+            let mut st_results = Vec::new();
+            let small = Self::bench_doc(10);
+            let medium = Self::bench_doc(100);
+
+            // insert small
+            let us = Self::measure_us(100, || {
+                if let Some(ref mut e) = self.storage_engine {
+                    let _ = e.insert_document(&small);
+                }
+            });
+            st_results.push(BenchResult { label: "Insert (10 fields)".into(), micros: us });
+
+            // insert medium
+            let us = Self::measure_us(100, || {
+                if let Some(ref mut e) = self.storage_engine {
+                    let _ = e.insert_document(&medium);
+                }
+            });
+            st_results.push(BenchResult { label: "Insert (100 fields)".into(), micros: us });
+
+            // get — use first doc if available
+            if let Some(&(doc_id, _)) = self.documents.first() {
+                let us = Self::measure_us(500, || {
+                    if let Some(ref mut e) = self.storage_engine {
+                        let _ = e.get_document(&doc_id);
+                    }
+                });
+                st_results.push(BenchResult { label: "Get document".into(), micros: us });
+            }
+
+            groups.push(BenchGroup { name: "Storage Engine (avg µs)".into(), results: st_results });
+        }
+
+        self.bench_groups = groups;
+        self.set_status("Benchmarks complete.", egui::Color32::from_rgb(100, 220, 120));
+    }
+
+    fn draw_bench_group(ui: &mut egui::Ui, group: &BenchGroup, accent: egui::Color32) {
+        ui.label(egui::RichText::new(&group.name).strong().size(13.0).color(egui::Color32::from_rgb(210, 215, 225)));
+        ui.add_space(6.0);
+
+        let max = group.results.iter().map(|r| r.micros).fold(0.0_f64, f64::max).max(0.001);
+        let bar_height = 22.0;
+        let label_w = 110.0;
+        let value_w = 70.0;
+
+        for result in &group.results {
+            ui.horizontal(|ui| {
+                ui.set_height(bar_height);
+                let available = ui.available_width() - label_w - value_w - 16.0;
+
+                ui.add_sized([label_w, bar_height], egui::Label::new(
+                    egui::RichText::new(&result.label).size(13.0).color(egui::Color32::GRAY)
+                ));
+
+                let fraction = (result.micros / max) as f32;
+                let fill_w = (fraction * available as f32).max(2.0);
+
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(available as f32, bar_height), egui::Sense::hover());
+                let bar_rect = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(0.0, 4.0),
+                    egui::vec2(fill_w, bar_height - 8.0),
+                );
+                let bg_rect = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(0.0, 4.0),
+                    egui::vec2(rect.width(), bar_height - 8.0),
+                );
+                let painter = ui.painter();
+                painter.rect_filled(bg_rect, egui::Rounding::same(3.0), egui::Color32::from_rgb(28, 30, 38));
+                painter.rect_filled(bar_rect, egui::Rounding::same(3.0), accent);
+
+                let label = if result.micros < 1.0 {
+                    format!("{:.3} µs", result.micros)
+                } else if result.micros < 1000.0 {
+                    format!("{:.1} µs", result.micros)
+                } else {
+                    format!("{:.1} ms", result.micros / 1000.0)
+                };
+                ui.add_sized([value_w, bar_height], egui::Label::new(
+                    egui::RichText::new(label).size(13.0).monospace().color(egui::Color32::from_rgb(180, 185, 195))
+                ));
+            });
+            ui.add_space(2.0);
+        }
+        ui.add_space(8.0);
+    }
+
     fn doc_display_name(document: &Document) -> String {
         document.get("name")
             .and_then(|v| if let Value::String(s) = v { Some(s.clone()) } else { None })
@@ -291,7 +452,7 @@ impl eframe::App for DatabaseApp {
 
                     ui.separator();
 
-                    ui.label(egui::RichText::new(&self.database_path).color(egui::Color32::GRAY).small());
+                    ui.label(egui::RichText::new(&self.database_path).color(egui::Color32::GRAY).size(13.0));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (dot, label) = if self.storage_engine.is_some() {
@@ -299,7 +460,7 @@ impl eframe::App for DatabaseApp {
                         } else {
                             (egui::Color32::from_rgb(220, 80, 80), "Disconnected")
                         };
-                        ui.label(egui::RichText::new(label).color(egui::Color32::GRAY).small());
+                        ui.label(egui::RichText::new(label).color(egui::Color32::GRAY).size(13.0));
                         ui.colored_label(dot, "●");
                     });
                 });
@@ -335,7 +496,7 @@ impl eframe::App for DatabaseApp {
                                 ui.label(
                                     egui::RichText::new(format!("{}", self.documents.len()))
                                         .color(egui::Color32::GRAY)
-                                        .small(),
+                                        .size(13.0),
                                 );
                             });
                         });
@@ -352,7 +513,7 @@ impl eframe::App for DatabaseApp {
                         ui.vertical_centered(|ui| {
                             ui.label(egui::RichText::new("No documents").color(egui::Color32::DARK_GRAY));
                             ui.add_space(4.0);
-                            ui.label(egui::RichText::new("Insert one to get started").color(egui::Color32::DARK_GRAY).small());
+                            ui.label(egui::RichText::new("Insert one to get started").color(egui::Color32::DARK_GRAY).size(13.0));
                         });
                         return;
                     }
@@ -381,12 +542,12 @@ impl eframe::App for DatabaseApp {
                                             ui.label(
                                                 egui::RichText::new(format!("{}:{}", doc_id.page_id(), doc_id.slot_id()))
                                                     .color(egui::Color32::DARK_GRAY)
-                                                    .small(),
+                                                    .size(13.0),
                                             );
                                         });
                                     });
                                     if !preview.is_empty() {
-                                        ui.label(egui::RichText::new(&preview).color(egui::Color32::GRAY).small());
+                                        ui.label(egui::RichText::new(&preview).color(egui::Color32::GRAY).size(13.0));
                                     }
                                 });
                             })
@@ -399,7 +560,7 @@ impl eframe::App for DatabaseApp {
                             self.active_tab = ActiveTab::View;
                         }
 
-                        ui.separator();
+                        ui.add_space(1.0);
                     }
                 });
             });
@@ -425,7 +586,7 @@ impl eframe::App for DatabaseApp {
                                 .inner_margin(egui::Margin::same(24.0))
                                 .show(ui, |ui| {
                                     ui.set_width(360.0);
-                                    ui.label(egui::RichText::new("Database file").color(egui::Color32::GRAY).small());
+                                    ui.label(egui::RichText::new("Database file").color(egui::Color32::GRAY).size(13.0));
                                     ui.add_space(4.0);
                                     ui.add(
                                         egui::TextEdit::singleline(&mut self.database_path)
@@ -458,106 +619,94 @@ impl eframe::App for DatabaseApp {
 
                 // Tab bar
                 egui::Frame::none()
-                    .fill(egui::Color32::from_rgb(24, 26, 32))
+                    .fill(egui::Color32::from_rgb(20, 22, 28))
                     .inner_margin(egui::Margin::symmetric(16.0, 0.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.add_space(0.0);
-                            let insert_active = self.active_tab == ActiveTab::Insert;
-                            let view_active = self.active_tab == ActiveTab::View;
-
-                            let insert_color = if insert_active { accent } else { egui::Color32::GRAY };
-                            let view_color = if view_active { accent } else { egui::Color32::GRAY };
-
-                            let insert_btn = ui.add(
-                                egui::Button::new(egui::RichText::new("Insert Document").color(insert_color).size(13.0))
-                                    .fill(egui::Color32::TRANSPARENT)
-                                    .stroke(egui::Stroke::NONE)
-                                    .frame(false),
-                            );
-                            if insert_btn.clicked() {
-                                self.active_tab = ActiveTab::Insert;
-                            }
-
-                            ui.add_space(8.0);
-
                             let view_label = if let Some(idx) = self.selected_doc_index {
                                 format!("Document #{}", idx + 1)
                             } else {
-                                "View Document".to_string()
+                                "View Document".into()
                             };
-                            let view_btn = ui.add(
-                                egui::Button::new(egui::RichText::new(&view_label).color(view_color).size(13.0))
-                                    .fill(egui::Color32::TRANSPARENT)
-                                    .stroke(egui::Stroke::NONE)
-                                    .frame(false),
-                            );
-                            if view_btn.clicked() {
-                                self.active_tab = ActiveTab::View;
+                            let tab_defs = [
+                                ("Insert Document", ActiveTab::Insert),
+                                (&*view_label, ActiveTab::View),
+                                ("Benchmarks", ActiveTab::Benchmarks),
+                            ];
+                            for (label, variant) in &tab_defs {
+                                let is_active = self.active_tab == *variant;
+                                let color = if is_active { accent } else { egui::Color32::GRAY };
+                                let btn = ui.add(
+                                    egui::Button::new(egui::RichText::new(*label).color(color).size(13.0))
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::NONE)
+                                        .frame(false),
+                                );
+                                if is_active {
+                                    let r = btn.rect;
+                                    ui.painter().line_segment(
+                                        [r.left_bottom() + egui::vec2(0.0, 3.0), r.right_bottom() + egui::vec2(0.0, 3.0)],
+                                        egui::Stroke::new(2.0, accent),
+                                    );
+                                }
+                                if btn.clicked() {
+                                    self.active_tab = match variant {
+                                        ActiveTab::Insert => ActiveTab::Insert,
+                                        ActiveTab::View => ActiveTab::View,
+                                        ActiveTab::Benchmarks => ActiveTab::Benchmarks,
+                                    };
+                                }
+                                ui.add_space(12.0);
                             }
                         });
                     });
 
-                ui.separator();
+                ui.add(egui::Separator::default().spacing(0.0));
 
                 // Tab content
                 match self.active_tab {
                     ActiveTab::Insert => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(16.0);
-
-                            egui::Frame::none()
-                                .inner_margin(egui::Margin::symmetric(24.0, 0.0))
-                                .show(ui, |ui| {
-                                    ui.label(egui::RichText::new("JSON Document").color(egui::Color32::GRAY).small());
-                                    ui.add_space(6.0);
-                                    ui.add(
-                                        egui::TextEdit::multiline(&mut self.json_input)
-                                            .font(egui::TextStyle::Monospace)
-                                            .code_editor()
-                                            .desired_rows(12)
-                                            .desired_width(f32::INFINITY),
-                                    );
-
-                                    ui.add_space(10.0);
-                                    ui.horizontal(|ui| {
-                                        if ui.add_sized(
-                                            [140.0, 30.0],
-                                            egui::Button::new("Insert Document")
-                                                .fill(egui::Color32::from_rgb(160, 65, 10)),
+                        egui::Frame::none()
+                            .inner_margin(egui::Margin::symmetric(24.0, 16.0))
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new("JSON Document").color(egui::Color32::DARK_GRAY).size(13.0));
+                                ui.add_space(4.0);
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.json_input)
+                                        .font(egui::TextStyle::Monospace)
+                                        .code_editor()
+                                        .desired_rows(22)
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    if ui.add_sized(
+                                        [140.0, 30.0],
+                                        egui::Button::new("Insert Document")
+                                            .fill(egui::Color32::from_rgb(160, 65, 10)),
+                                    ).clicked() {
+                                        self.insert_document_from_json();
+                                    }
+                                    if ui.add_sized(
+                                        [70.0, 30.0],
+                                        egui::Button::new("Clear")
+                                            .fill(egui::Color32::from_rgb(35, 38, 48)),
+                                    ).clicked() {
+                                        self.json_input.clear();
+                                    }
+                                    ui.add_space(16.0);
+                                    ui.label(egui::RichText::new("Examples:").color(egui::Color32::DARK_GRAY).size(13.0));
+                                    for (label, json) in Self::example_documents() {
+                                        if ui.add(
+                                            egui::Button::new(egui::RichText::new(*label).size(13.0))
+                                                .fill(egui::Color32::from_rgb(30, 33, 42))
+                                                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 55, 68))),
                                         ).clicked() {
-                                            self.insert_document_from_json();
+                                            self.json_input = json.to_string();
                                         }
-
-                                        if ui.add_sized(
-                                            [80.0, 30.0],
-                                            egui::Button::new("Clear")
-                                                .fill(egui::Color32::from_rgb(35, 38, 48)),
-                                        ).clicked() {
-                                            self.json_input.clear();
-                                        }
-                                    });
-
-                                    ui.add_space(24.0);
-                                    ui.separator();
-                                    ui.add_space(12.0);
-
-                                    ui.label(egui::RichText::new("Examples").color(egui::Color32::GRAY).small());
-                                    ui.add_space(8.0);
-
-                                    ui.horizontal_wrapped(|ui| {
-                                        for (label, json) in Self::example_documents() {
-                                            if ui.add(
-                                                egui::Button::new(egui::RichText::new(*label).small())
-                                                    .fill(egui::Color32::from_rgb(30, 33, 42))
-                                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 55, 68))),
-                                            ).clicked() {
-                                                self.json_input = json.to_string();
-                                            }
-                                        }
-                                    });
+                                    }
                                 });
-                        });
+                            });
                     }
 
                     ActiveTab::View => {
@@ -579,13 +728,13 @@ impl eframe::App for DatabaseApp {
                                             ui.label(
                                                 egui::RichText::new(format!("page {} · slot {}", doc_id.page_id(), doc_id.slot_id()))
                                                     .color(egui::Color32::DARK_GRAY)
-                                                    .small(),
+                                                    .size(13.0),
                                             );
 
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                 if !edit_mode {
                                                     if ui.add(
-                                                        egui::Button::new(egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 80, 80)).small())
+                                                        egui::Button::new(egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 80, 80)).size(13.0))
                                                             .fill(egui::Color32::from_rgb(40, 24, 24))
                                                             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 30, 30))),
                                                     ).clicked() {
@@ -593,7 +742,7 @@ impl eframe::App for DatabaseApp {
                                                     }
                                                     ui.add_space(8.0);
                                                     if ui.add(
-                                                        egui::Button::new(egui::RichText::new("Edit").small())
+                                                        egui::Button::new(egui::RichText::new("Edit").size(13.0))
                                                             .fill(egui::Color32::from_rgb(35, 38, 48))
                                                             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(55, 60, 75))),
                                                     ).clicked() {
@@ -607,14 +756,14 @@ impl eframe::App for DatabaseApp {
                                                     }
                                                 } else {
                                                     if ui.add(
-                                                        egui::Button::new(egui::RichText::new("Cancel").small())
+                                                        egui::Button::new(egui::RichText::new("Cancel").size(13.0))
                                                             .fill(egui::Color32::from_rgb(35, 38, 48)),
                                                     ).clicked() {
                                                         self.edit_mode = false;
                                                     }
                                                     ui.add_space(8.0);
                                                     if ui.add(
-                                                        egui::Button::new(egui::RichText::new("Save").small())
+                                                        egui::Button::new(egui::RichText::new("Save").size(13.0))
                                                             .fill(egui::Color32::from_rgb(160, 65, 10)),
                                                     ).clicked() {
                                                         self.update_selected_document();
@@ -628,7 +777,7 @@ impl eframe::App for DatabaseApp {
                                         ui.add_space(12.0);
 
                                         if edit_mode {
-                                            ui.label(egui::RichText::new("Edit as JSON").color(egui::Color32::GRAY).small());
+                                            ui.label(egui::RichText::new("Edit as JSON").color(egui::Color32::GRAY).size(13.0));
                                             ui.add_space(6.0);
                                             egui::ScrollArea::vertical().show(ui, |ui| {
                                                 ui.add(
@@ -654,14 +803,14 @@ impl eframe::App for DatabaseApp {
                                                                         ui.label(
                                                                             egui::RichText::new(field_name)
                                                                                 .color(accent)
-                                                                                .small()
+                                                                                .size(13.0)
                                                                                 .monospace(),
                                                                         );
                                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                                             ui.label(
                                                                                 egui::RichText::new(format!("{}", field_value))
                                                                                     .monospace()
-                                                                                    .small(),
+                                                                                    .size(13.0),
                                                                             );
                                                                         });
                                                                     });
@@ -686,10 +835,56 @@ impl eframe::App for DatabaseApp {
                                     ui.add_space(80.0);
                                     ui.label(egui::RichText::new("No document selected").color(egui::Color32::DARK_GRAY).size(16.0));
                                     ui.add_space(8.0);
-                                    ui.label(egui::RichText::new("Select one from the list on the left").color(egui::Color32::DARK_GRAY).small());
+                                    ui.label(egui::RichText::new("Select one from the list on the left").color(egui::Color32::DARK_GRAY).size(13.0));
                                 });
                             });
                         }
+                    }
+
+                    ActiveTab::Benchmarks => {
+                        egui::Frame::none()
+                            .inner_margin(egui::Margin::symmetric(24.0, 16.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Performance Benchmarks").strong().size(16.0));
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(egui::RichText::new(format!("{} iterations per test", self.bench_iters)).color(egui::Color32::DARK_GRAY).size(13.0));
+                                        ui.add_space(12.0);
+                                        if ui.add(
+                                            egui::Button::new("Run Benchmarks")
+                                                .fill(egui::Color32::from_rgb(160, 65, 10)),
+                                        ).clicked() {
+                                            self.run_benchmarks();
+                                        }
+                                    });
+                                });
+
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("Measures average time per operation over multiple iterations. Storage benchmarks require an open database.").color(egui::Color32::DARK_GRAY).size(13.0));
+                                ui.add_space(16.0);
+                                ui.separator();
+                                ui.add_space(12.0);
+
+                                if self.bench_groups.is_empty() {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.vertical_centered(|ui| {
+                                            ui.add_space(60.0);
+                                            ui.label(egui::RichText::new("No results yet").color(egui::Color32::DARK_GRAY).size(16.0));
+                                            ui.add_space(8.0);
+                                            ui.label(egui::RichText::new("Click \"Run Benchmarks\" to measure performance").color(egui::Color32::DARK_GRAY).size(13.0));
+                                        });
+                                    });
+                                } else {
+                                    egui::ScrollArea::vertical().show(ui, |ui| {
+                                        let groups: Vec<&BenchGroup> = self.bench_groups.iter().collect();
+                                        for group in groups {
+                                            Self::draw_bench_group(ui, group, accent);
+                                            ui.separator();
+                                            ui.add_space(8.0);
+                                        }
+                                    });
+                                }
+                            });
                     }
                 }
             });
