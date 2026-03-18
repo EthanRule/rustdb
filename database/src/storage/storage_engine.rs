@@ -10,9 +10,9 @@
 // TODO: Consider adding a tombstone Vacuum
 
 use crate::{
+    Document,
     document::bson::{deserialize_document, serialize_document},
     storage::{buffer_pool::BufferPool, file::DatabaseFile, page_layout::PageLayout},
-    Document,
 };
 use anyhow::Result;
 use std::path::Path;
