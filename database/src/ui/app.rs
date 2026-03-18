@@ -37,7 +37,9 @@ impl Default for DatabaseApp {
     fn default() -> Self {
         Self {
             storage_engine: None,
-            database_path: "database_ui.db".to_string(),
+            database_path: std::env::current_dir()
+                .map(|cwd| cwd.join("database_ui.db").display().to_string())
+                .unwrap_or_else(|_| "database_ui.db".to_string()),
             documents: Vec::new(),
             json_input: String::new(),
             status_message: "No database open. Create or open one to get started.".to_string(),
@@ -69,6 +71,12 @@ impl DatabaseApp {
 
     fn create_database_internal(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let path = Path::new(&self.database_path);
+        if path.exists() {
+            return Err(format!(
+                "A database already exists at \"{}\". Delete it or choose a different path.",
+                self.database_path
+            ).into());
+        }
         let _db_file = DatabaseFile::create(path)?;
         drop(_db_file);
         self.storage_engine = Some(StorageEngine::new(path, 64)?);
@@ -302,9 +310,9 @@ impl eframe::App for DatabaseApp {
             .frame(egui::Frame::none().fill(egui::Color32::from_rgb(20, 22, 28)).inner_margin(egui::Margin::symmetric(12.0, 6.0)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.colored_label(self.status_color, egui::RichText::new(&self.status_message).small());
+                    ui.colored_label(self.status_color, egui::RichText::new(&self.status_message).size(14.0));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new(format!("{} documents", self.documents.len())).color(egui::Color32::GRAY).small());
+                        ui.label(egui::RichText::new(format!("{} documents", self.documents.len())).color(egui::Color32::GRAY).size(14.0));
                     });
                 });
             });
