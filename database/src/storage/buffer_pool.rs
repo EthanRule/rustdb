@@ -177,11 +177,13 @@ impl BufferPool {
     }
 
     fn write_page_to_disk(
-        &self,
+        &mut self,
         page_id: u64,
         database_file: &mut DatabaseFile,
     ) -> Result<(), DatabaseError> {
-        if let Some(page) = self.pages.get(&page_id) {
+        if let Some(page) = self.pages.get_mut(&page_id) {
+            let checksum = page.calculate_checksum();
+            page.set_checksum(checksum);
             database_file.write_page(page_id, page)?;
         } else {
             return Err(DatabaseError::Storage(format!(

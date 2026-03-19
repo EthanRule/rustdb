@@ -263,20 +263,27 @@ impl PageLayout {
     }
 
     /// Compact the page by removing fragmentation
-    pub fn compact_page(page: &mut Page) -> Result<(), DatabaseError> {
+    pub fn compact_page(page: &mut Page) -> Result<bool, DatabaseError> {
         let header = Self::read_slot_directory_header(page)?;
 
         // Collect all active documents
         let mut documents = Vec::new();
+        let mut had_tombstones: bool = false;
 
         for slot_id in 0..header.slot_count {
             let slot_entry = Self::read_slot_entry(page, slot_id)?;
 
-            if !slot_entry.is_tombstone() && !slot_entry.is_empty() {
+            if slot_entry.is_tombstone() {
+                had_tombstones = true;
+            } else if !slot_entry.is_empty() {
                 let doc_data =
                     Self::read_document_data_owned(page, slot_entry.offset, slot_entry.length)?;
                 documents.push((slot_id, doc_data));
             }
+        }
+
+        if !had_tombstones {
+            return Ok(false);
         }
 
         // Clear all slot entries
@@ -308,7 +315,8 @@ impl PageLayout {
         Self::write_slot_directory_header(page, &new_header)?;
 
         Self::update_page_free_space(page)?;
-        Ok(())
+
+        Ok(true)
     }
 
     /// Get page utilization percentage

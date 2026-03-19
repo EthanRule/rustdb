@@ -7,4 +7,5 @@ mod page_layout_integration;
 mod storage_engine_extended_test;
 mod storage_engine_test;
 mod week1_integration;
+mod vacuum_test;
 mod week2_integration;

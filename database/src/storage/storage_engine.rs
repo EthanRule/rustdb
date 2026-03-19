@@ -183,16 +183,25 @@ impl StorageEngine {
 
         Ok(())
     }
-    
+
+    // Compacts pages and cleans tombstones. Returns number of pages cleaned.
     pub fn vacuum(&mut self) -> Result<usize> {
-        let page_ids = self.buffer_pool.get_all_page_ids();
-        for page_id in page_ids {
-            let page = self.buffer_pool.pin_page(page_id, &mut self.database_file);
-            PageLayout::compact_page(&mut page);
-            buffer_pool.unpin_page(poge_id, true);
+        self.buffer_pool.flush_all(&mut self.database_file)?; // Clear buffer_pool (LRU cache) before reformatting.
+
+        let total_pages = self.database_file.page_count();
+        let mut pages_cleaned: usize = 0;
+        for page_id in 0..total_pages {
+            let mut page = self.database_file.read_page(page_id)?;
+            let was_compacted = PageLayout::compact_page(&mut page)?;
+            if was_compacted {
+                let checksum = page.calculate_checksum(); // Since bytes are changed, recompute CRC32 hash to ensure data integrity.
+                page.set_checksum(checksum);
+                self.database_file.write_page(page_id, &page)?;
+                pages_cleaned += 1;
+            }
         }
-        
-        Ok(())
+
+        Ok(pages_cleaned)
     }
 
     // Helper function to avoid code duplication
