@@ -7,7 +7,6 @@
 // Slots = Page numbers within each book
 // Dirty = You wrote notes in the margins (needs to be saved)
 // Unpinning = Returning the book (clean or with notes to be filed)
-// TODO: Consider adding a tombstone Vacuum
 
 use crate::{
     Document,
@@ -202,6 +201,24 @@ impl StorageEngine {
         }
 
         Ok(pages_cleaned)
+    }
+
+    /* **Goal:** Make documents iterable. Everything else depends on this.
+
+    - Add `scan_all(&mut self) -> Result<Vec<(DocumentId, Document)>>` to `StorageEngine`
+      - Iterate `page_id` from `0..page_count()`
+      - For each page, read all non-tombstone slots and deserialize
+    - Add a `Collection` struct that wraps `StorageEngine` and owns a name + tracks its `DocumentId` list
+      - `collections/mod.rs` — `Collection { name, engine, doc_ids: Vec<DocumentId> }`
+      - `insert`, `scan`, `get_by_id` methods
+    */
+
+    pub fn scan_all(&mut self) -> Result<Vec<(DocumentId, Document)>> {
+        for i in 0..self.database_file.page_count() {
+            if (self.database_file[i] == 0) {}
+        }
+
+        Ok()
     }
 
     // Helper function to avoid code duplication
