@@ -214,8 +214,9 @@ impl StorageEngine {
     */
 
     pub fn scan_all(&mut self) -> Result<Vec<(DocumentId, Document)>> {
+        let mut position = 0;
         for i in 0..self.database_file.page_count() {
-            if (self.database_file[i] == 0) {}
+            self.get_document(document_id)
         }
 
         Ok()
